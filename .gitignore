@@ -1,0 +1,20 @@
+# macOS
+.DS_Store
+
+# Python
+**/.venv/
+__pycache__/
+*.pyc
+
+# caveman compress backups
+*.original.md
+
+# keep local, never publish
+.claude/
+archive/
+output/
+plans/
+wip/
+
+# local-only Claude memory
+CLAUDE.local.md

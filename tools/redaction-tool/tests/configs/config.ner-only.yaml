@@ -1,0 +1,16 @@
+# Run A — NER-only (no custom_keywords). Demonstrates the gap leaks.
+entities:
+  - PERSON
+  - EMAIL_ADDRESS
+  - PHONE_NUMBER
+  - ORGANIZATION
+  - LOCATION
+custom_keywords: []
+replacement: "█████"
+spacy_model: en_core_web_sm
+output_dir: redacted
+include_extensions:
+  - .md
+  - .html
+  - .htm
+skip_extensions: []

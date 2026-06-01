@@ -1,0 +1,87 @@
+# ── redact.py configuration ──────────────────────────────────────────────────
+# Edit this file, then run: python redact.py /path/to/notion-export
+
+# Named entity types Presidio/spaCy will detect automatically.
+# Available types: PERSON, EMAIL_ADDRESS, PHONE_NUMBER, ORGANIZATION,
+#   LOCATION, US_SSN, CREDIT_CARD, IBAN_CODE, IP_ADDRESS, NRP (nationality/religion/politics)
+entities:
+  - PERSON
+  - EMAIL_ADDRESS
+  - PHONE_NUMBER
+  - ORGANIZATION
+  - LOCATION
+
+# Exact strings to ALWAYS redact, regardless of NLP detection.
+# Uses word-boundary matching, case-sensitive.
+#
+# Two formats:
+#
+#   Plain string — replaced with the default replacement (█████):
+#     - "Contoso"
+#
+#   Find/replace mapping — replaced with your specific string:
+#     - find: "John Smith"
+#       replace: "J.S."
+#     - find: "Acme Corp"
+#       replace: "[CLIENT-A]"
+#
+# Mix and match freely. Good for:
+#   - Names NLP might miss → initials for traceability
+#   - Client names → anonymized codes you can track
+#   - Project codenames → generic labels
+#   - Internal product names → [REDACTED-PRODUCT]
+custom_keywords:
+  # - "Contoso"                        # plain: replaced with █████
+  # - find: "John Smith"               # mapped: replaced with initials
+  #   replace: "J.S."
+  # - find: "Acme Corp"
+  #   replace: "[CLIENT-A]"
+  # - find: "Project Phoenix"
+  #   replace: "[PROJECT-1]"
+
+# What redacted content is replaced with in output files.
+replacement: "█████"
+
+# spaCy model to use for NLP. Tradeoffs:
+#   en_core_web_lg  — best accuracy, ~750 MB download  (recommended)
+#   en_core_web_md  — good accuracy, ~43 MB download
+#   en_core_web_sm  — acceptable, ~12 MB download (fastest setup)
+# After changing, run: python -m spacy download <model_name>
+spacy_model: en_core_web_lg
+
+# Subfolder created inside your input folder for redacted output.
+# Your originals are NEVER modified.
+output_dir: redacted
+
+# File types to exclude entirely — not processed, not copied to redacted/.
+# Useful for binary formats that can't be text-redacted (video, audio)
+# or types you want to keep out of downstream tools altogether.
+skip_extensions:
+  - .pdf
+  - .mp4
+  - .mov
+  - .m4v
+
+# File types to process. Everything else is copied as-is.
+include_extensions:
+  - .md
+  - .html
+  - .htm
+  - .png
+  - .jpg
+  - .jpeg
+  - .gif
+  - .webp
+
+ocr:
+  # Use Apple Vision (on-device, M-series Neural Engine). Recommended.
+  # Requires: pip install pyobjc-framework-Vision (included in requirements.txt)
+  use_apple_vision: true
+
+  # Fall back to Tesseract if Apple Vision is unavailable.
+  # Requires: brew install tesseract && pip install pytesseract
+  fallback_tesseract: true
+
+  # Resolution for rendering scanned PDF pages before OCR.
+  # Higher = better OCR accuracy but slower. 200 is a good default.
+  dpi: 200
