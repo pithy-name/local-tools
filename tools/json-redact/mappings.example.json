@@ -1,0 +1,7 @@
+[
+  {"find": "Alice Chen", "replace": "[PERSON_A]"},
+  {"find": "Bob Reyes", "replace": "[PERSON_B]"},
+  {"find": "alice.chen@example.com", "replace": "[EMAIL_A]"},
+  {"find": "Acme Corp", "replace": "[ORG_A]"},
+  {"find": "Project Phoenix", "replace": "[PROJECT_1]"}
+]
