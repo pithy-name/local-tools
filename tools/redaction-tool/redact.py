@@ -13,6 +13,8 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import csv
+import json
 import logging
 import os
 import re
@@ -284,6 +286,63 @@ def process_html(
     return total
 
 
+def _walk_json(obj, redact_one):
+    """Recursively redact string VALUES via redact_one(s)->(s', n). Keys and
+    non-strings pass through. Returns (new_obj, total_swaps)."""
+    if isinstance(obj, str):
+        return redact_one(obj)
+    if isinstance(obj, list):
+        out, total = [], 0
+        for v in obj:
+            nv, n = _walk_json(v, redact_one)
+            out.append(nv)
+            total += n
+        return out, total
+    if isinstance(obj, dict):
+        out, total = {}, 0
+        for k, v in obj.items():
+            nv, n = _walk_json(v, redact_one)
+            out[k] = nv
+            total += n
+        return out, total
+    return obj, 0
+
+
+def process_json(
+    src: Path, dst: Path, analyzer, cfg: dict, kw_replacements: dict, dry_run: bool, kr=None
+) -> int:
+    """Parse-aware JSON redaction: redact string VALUES only, re-serialize valid
+    JSON. Keys, numbers, bools, nulls pass through; originals never modified."""
+    data = json.loads(src.read_text(encoding="utf-8-sig", errors="replace"))
+    redacted, total = _walk_json(
+        data, lambda s: _redact_text(s, analyzer, cfg, kw_replacements, kr))
+    if not dry_run:
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        dst.write_text(json.dumps(redacted, ensure_ascii=False, indent=2) + "\n",
+                       encoding="utf-8")
+    return total
+
+
+def process_csv(
+    src: Path, dst: Path, analyzer, cfg: dict, kw_replacements: dict, dry_run: bool, kr=None
+) -> int:
+    """Redact every cell of a CSV, preserving structure (csv.reader/writer)."""
+    rows_out, total = [], 0
+    with src.open(encoding="utf-8-sig", newline="") as f:
+        for row in csv.reader(f):
+            new_row = []
+            for cell in row:
+                red, n = _redact_text(cell, analyzer, cfg, kw_replacements, kr)
+                new_row.append(red)
+                total += n
+            rows_out.append(new_row)
+    if not dry_run:
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        with dst.open("w", encoding="utf-8", newline="") as f:
+            csv.writer(f).writerows(rows_out)
+    return total
+
+
 # ── OCR (Apple Vision + Tesseract fallback) ───────────────────────────────────
 
 # Each observation: {"text": str, "bbox_pixels": (x0, y0, x1, y1)}
@@ -526,7 +585,8 @@ def run(input_dir: Path, cfg: dict, dry_run: bool) -> None:
         output_dir.mkdir(exist_ok=True)
 
     skip_exts = set(cfg.get("skip_extensions", []))
-    stats: dict = {"md": 0, "html": 0, "pdf": 0, "img": 0, "copy": 0, "skip": 0, "errors": 0}
+    stats: dict = {"md": 0, "html": 0, "json": 0, "csv": 0, "pdf": 0, "img": 0,
+                   "copy": 0, "skip": 0, "errors": 0}
     total_redactions = 0
 
     # Collect all files first (excluding the output dir) so we can decide what to load.
@@ -573,6 +633,18 @@ def run(input_dir: Path, cfg: dict, dry_run: bool) -> None:
                 stats["html"] += 1
                 total_redactions += n
 
+            elif ext == ".json":
+                n = process_json(src, dst, analyzer, cfg, kw_replacements, dry_run, kr=kr)
+                log.info(f"  JSON {rel}  → {n} redaction(s)")
+                stats["json"] += 1
+                total_redactions += n
+
+            elif ext == ".csv":
+                n = process_csv(src, dst, analyzer, cfg, kw_replacements, dry_run, kr=kr)
+                log.info(f"  CSV  {rel}  → {n} redaction(s)")
+                stats["csv"] += 1
+                total_redactions += n
+
             elif ext == ".pdf":
                 n = process_pdf(src, dst, analyzer, cfg, dry_run)
                 log.info(f"  PDF  {rel}  → {n} redaction(s)")
@@ -602,6 +674,8 @@ def run(input_dir: Path, cfg: dict, dry_run: bool) -> None:
         f"  Total redactions : {total_redactions}\n"
         f"  Markdown files   : {stats['md']}\n"
         f"  HTML files       : {stats['html']}\n"
+        f"  JSON files       : {stats['json']}\n"
+        f"  CSV files        : {stats['csv']}\n"
         f"  PDF files        : {stats['pdf']}\n"
         f"  Image files      : {stats['img']}\n"
         f"  Copied unchanged : {stats['copy']}\n"
