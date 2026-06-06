@@ -694,6 +694,65 @@ def run(input_dir: Path, cfg: dict, dry_run: bool) -> None:
                  + render_count_report(report))
 
 
+# ── Scan (discovery) ──────────────────────────────────────────────────────────
+
+def _iter_json_strings(obj):
+    if isinstance(obj, str):
+        yield obj
+    elif isinstance(obj, list):
+        for v in obj:
+            yield from _iter_json_strings(v)
+    elif isinstance(obj, dict):
+        for v in obj.values():
+            yield from _iter_json_strings(v)
+
+
+def _texts_for_scan(src: Path, ext: str):
+    """Yield the text chunks to NER-scan for one file."""
+    if ext in (".md", ".txt"):
+        yield src.read_text(encoding="utf-8", errors="replace")
+    elif ext == ".json":
+        yield from _iter_json_strings(
+            json.loads(src.read_text(encoding="utf-8-sig", errors="replace")))
+    elif ext == ".csv":
+        with src.open(encoding="utf-8-sig", newline="") as f:
+            for row in csv.reader(f):
+                yield from row
+
+
+def scan(input_dir: Path, cfg: dict) -> None:
+    """Discovery scan: run NER over text files and LIST candidate identities by
+    entity type. Writes nothing. Images/PDF/HTML are not yet scanned."""
+    from report_format import collect_entities, render_scan_report
+
+    log.info(f"Loading NLP model '{cfg.get('spacy_model', 'en_core_web_lg')}' for scan…")
+    analyzer, _ = build_analyzer(cfg)
+    entities = cfg.get("entities") or DEFAULT_CONFIG["entities"]
+
+    output_dir = input_dir / cfg["output_dir"]
+    files = [f for f in sorted(input_dir.rglob("*"))
+             if f.is_file() and output_dir not in f.parents]
+    SCAN_EXTS = {".md", ".txt", ".json", ".csv"}
+
+    texts, scanned, skipped = [], 0, 0
+    for src in files:
+        ext = src.suffix.lower()
+        if ext not in SCAN_EXTS:
+            skipped += 1
+            continue
+        try:
+            texts.extend(_texts_for_scan(src, ext))
+            scanned += 1
+        except Exception as e:
+            log.error(f"  scan skip {src.relative_to(input_dir)}: {e}")
+
+    found = collect_entities(
+        texts, lambda t: analyzer.analyze(text=t, entities=entities, language="en"))
+    log.info(f"\n[SCAN] {scanned} text file(s) scanned, {skipped} non-text skipped "
+             f"(images/PDF/HTML scanning not yet implemented).\n"
+             + render_scan_report(found))
+
+
 # ── Entry point ───────────────────────────────────────────────────────────────
 
 def main() -> None:
@@ -711,6 +770,11 @@ def main() -> None:
         "--dry-run", action="store_true",
         help="Report what would be redacted without writing any files"
     )
+    parser.add_argument(
+        "--scan", action="store_true",
+        help="Discovery mode: NER-scan text files and LIST candidate identities "
+             "(no redaction, no files written) to seed custom_keywords"
+    )
     args = parser.parse_args()
 
     cfg = load_config(args.config)
@@ -718,6 +782,10 @@ def main() -> None:
 
     if not input_dir.is_dir():
         sys.exit(f"Error: not a directory: {input_dir}")
+
+    if args.scan:
+        scan(input_dir, cfg)
+        return
 
     if args.dry_run:
         log.info("DRY RUN mode — no files will be written")

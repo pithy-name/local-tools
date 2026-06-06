@@ -7,7 +7,7 @@ two mechanism counts (text-sub / blackout), with blackout == None rendered N/A
 """
 from __future__ import annotations
 
-from collections import OrderedDict
+from collections import Counter, OrderedDict, defaultdict
 
 
 def build_count_report(mappings, text_counts, blackout_counts=None) -> dict:
@@ -64,4 +64,31 @@ def render_count_report(report) -> str:
             f"text-sub: {st['text']}  blackout: {_b(st['blackout'])}")
     lines.append(f"  Total text-subs : {report['total_text']}")
     lines.append(f"  Total blackouts : {_b(report['total_blackout'])}")
+    return "\n".join(lines)
+
+
+# ── Scan (discovery) report — lists candidate identities, no pseudonyms yet ──
+
+def collect_entities(texts, analyze_fn) -> dict:
+    """texts: iterable of strings. analyze_fn(text) -> results with
+    .entity_type/.start/.end. Returns {entity_type: Counter(matched_string)}."""
+    found: "defaultdict[str, Counter]" = defaultdict(Counter)
+    for text in texts:
+        if not text or not text.strip():
+            continue
+        for r in analyze_fn(text):
+            found[r.entity_type][text[r.start:r.end]] += 1
+    return found
+
+
+def render_scan_report(found) -> str:
+    if not found:
+        return "  No candidate entities found."
+    lines = ["  Candidate entities (real PII — do not commit this output):"]
+    for etype in sorted(found):
+        items = found[etype].most_common()
+        lines.append(f"  {etype}  ({len(items)} unique)")
+        width = max((len(t) for t, _ in items), default=0)
+        for text, n in items:
+            lines.append(f"    {text.ljust(width)}  ... {n}")
     return "\n".join(lines)
