@@ -120,6 +120,24 @@ def normalize_keywords(cfg: dict) -> list[dict]:
     return normalized
 
 
+def make_keyword_redactor_from_config(cfg: dict):
+    """Keyword-only text redactor backed by keyword_redactor — NO spaCy load.
+
+    Used when entities is empty (keyword-only mode). Converts redact.py's
+    custom_keywords into keyword_redactor mappings: a plain-string keyword
+    (replace=None) takes the default replacement (cfg['replacement']).
+    """
+    from keyword_redactor import KeywordRedactor
+
+    default = cfg.get("replacement", "█████")
+    mappings = [
+        {"find": k["find"],
+         "replace": k["replace"] if k["replace"] is not None else default}
+        for k in normalize_keywords(cfg)
+    ]
+    return KeywordRedactor(mappings)
+
+
 def build_analyzer(cfg: dict) -> tuple:
     """
     Return (AnalyzerEngine, kw_replacements).
@@ -206,22 +224,33 @@ def anonymize(
 
 # ── Text file handlers ────────────────────────────────────────────────────────
 
+def _redact_text(text, analyzer, cfg: dict, kw_replacements: dict, kr) -> tuple:
+    """Redact one string → (redacted, n_swaps).
+
+    kr (a keyword_redactor.KeywordRedactor, keyword-only mode) wins when set —
+    no spaCy. Otherwise the NER+keyword analyzer path. n_swaps is per-call.
+    """
+    if kr is not None:
+        before = sum(kr.counts.values())
+        out = kr.redact(text)
+        return out, sum(kr.counts.values()) - before
+    results = analyze(text, analyzer, cfg, kw_replacements)
+    return anonymize(text, results, cfg["replacement"], kw_replacements), len(results)
+
+
 def process_markdown(
-    src: Path, dst: Path, analyzer, cfg: dict, kw_replacements: dict, dry_run: bool
+    src: Path, dst: Path, analyzer, cfg: dict, kw_replacements: dict, dry_run: bool, kr=None
 ) -> int:
     text = src.read_text(encoding="utf-8", errors="replace")
-    results = analyze(text, analyzer, cfg, kw_replacements)
+    redacted, n = _redact_text(text, analyzer, cfg, kw_replacements, kr)
     if not dry_run:
         dst.parent.mkdir(parents=True, exist_ok=True)
-        dst.write_text(
-            anonymize(text, results, cfg["replacement"], kw_replacements),
-            encoding="utf-8",
-        )
-    return len(results)
+        dst.write_text(redacted, encoding="utf-8")
+    return n
 
 
 def process_html(
-    src: Path, dst: Path, analyzer, cfg: dict, kw_replacements: dict, dry_run: bool
+    src: Path, dst: Path, analyzer, cfg: dict, kw_replacements: dict, dry_run: bool, kr=None
 ) -> int:
     from bs4 import BeautifulSoup
 
@@ -235,20 +264,18 @@ def process_html(
         if node.parent and node.parent.name in SKIP_TAGS:
             continue
         text = str(node)
-        results = analyze(text, analyzer, cfg, kw_replacements)
-        total += len(results)
-        if results and not dry_run:
-            node.replace_with(
-                anonymize(text, results, cfg["replacement"], kw_replacements)
-            )
+        redacted, n = _redact_text(text, analyzer, cfg, kw_replacements, kr)
+        total += n
+        if n and not dry_run:
+            node.replace_with(redacted)
 
     # Also scrub mailto: href attributes (emails in links)
     for tag in soup.find_all("a", href=re.compile(r"^mailto:", re.I)):
         href = tag.get("href", "")
-        results = analyze(href, analyzer, cfg, kw_replacements)
-        total += len(results)
-        if results and not dry_run:
-            tag["href"] = anonymize(href, results, cfg["replacement"], kw_replacements)
+        redacted, n = _redact_text(href, analyzer, cfg, kw_replacements, kr)
+        total += n
+        if n and not dry_run:
+            tag["href"] = redacted
 
     if not dry_run:
         dst.parent.mkdir(parents=True, exist_ok=True)
@@ -498,19 +525,31 @@ def run(input_dir: Path, cfg: dict, dry_run: bool) -> None:
     if not dry_run:
         output_dir.mkdir(exist_ok=True)
 
-    log.info(f"Loading NLP model '{cfg.get('spacy_model', 'en_core_web_lg')}' "
-             f"(first run may take ~30s)…")
-    analyzer, kw_replacements = build_analyzer(cfg)
-    log.info("NLP model ready.")
-
-    exts = set(cfg["include_extensions"])
     skip_exts = set(cfg.get("skip_extensions", []))
     stats: dict = {"md": 0, "html": 0, "pdf": 0, "img": 0, "copy": 0, "skip": 0, "errors": 0}
     total_redactions = 0
 
-    # Collect all files, excluding anything already in the output dir
+    # Collect all files first (excluding the output dir) so we can decide what to load.
     all_files = sorted(f for f in input_dir.rglob("*") if f.is_file())
     files = [f for f in all_files if output_dir not in f.parents]
+
+    # Keyword-only mode (entities empty) redacts text via the stdlib keyword_redactor
+    # and loads the spaCy model ONLY when a config-enabled image/PDF is present —
+    # images/PDF still need the analyzer for matching on OCR'd text. A text-only
+    # keyword run loads no model at all; a text-only config never loads one either.
+    BINARY_EXTS = {".pdf", ".png", ".jpg", ".jpeg", ".gif", ".webp"}
+    keyword_only = not cfg.get("entities")
+    has_binary = any(f.suffix.lower() in BINARY_EXTS and f.suffix.lower() not in skip_exts
+                     for f in files)
+    kr = make_keyword_redactor_from_config(cfg) if keyword_only else None
+    if (not keyword_only) or has_binary:
+        log.info(f"Loading NLP model '{cfg.get('spacy_model', 'en_core_web_lg')}' "
+                 f"(first run may take ~30s)…")
+        analyzer, kw_replacements = build_analyzer(cfg)
+        log.info("NLP model ready.")
+    else:
+        analyzer, kw_replacements = None, {}
+        log.info("Keyword-only, text-only input — skipping spaCy model load.")
 
     for src in files:
         rel = src.relative_to(input_dir)
@@ -523,13 +562,13 @@ def run(input_dir: Path, cfg: dict, dry_run: bool) -> None:
                 stats["skip"] += 1
                 continue
             if ext == ".md":
-                n = process_markdown(src, dst, analyzer, cfg, kw_replacements, dry_run)
+                n = process_markdown(src, dst, analyzer, cfg, kw_replacements, dry_run, kr=kr)
                 log.info(f"  MD   {rel}  → {n} redaction(s)")
                 stats["md"] += 1
                 total_redactions += n
 
             elif ext in (".html", ".htm"):
-                n = process_html(src, dst, analyzer, cfg, kw_replacements, dry_run)
+                n = process_html(src, dst, analyzer, cfg, kw_replacements, dry_run, kr=kr)
                 log.info(f"  HTML {rel}  → {n} redaction(s)")
                 stats["html"] += 1
                 total_redactions += n
