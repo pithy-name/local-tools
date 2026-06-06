@@ -42,7 +42,7 @@ def load_mappings(path) -> list[dict]:
 
 class KeywordRedactor:
     def __init__(self, mappings: list[dict]):
-        self._mappings = mappings
+        self.mappings = mappings  # public: [{find, replace}], for count reporting
         # Longest find first → the combined alternation prefers longer matches.
         ordered = sorted(mappings, key=lambda m: len(m["find"]), reverse=True)
         alts = "|".join(re.escape(m["find"]) for m in ordered)

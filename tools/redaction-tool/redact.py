@@ -684,6 +684,15 @@ def run(input_dir: Path, cfg: dict, dry_run: bool) -> None:
         + (f"  Output at        : {output_dir}\n" if not dry_run else "")
     )
 
+    # Keyword-only mode: per-pseudonym count report. text-sub counts come from the
+    # keyword_redactor; blackout is N/A until the image/PDF path reports per-keyword
+    # counts (binary count parity, a later milestone).
+    if kr is not None and kr.mappings:
+        from report_format import build_count_report, render_count_report
+        report = build_count_report(kr.mappings, kr.counts)
+        log.info("\n  Per-pseudonym counts (text-sub | blackout):\n"
+                 + render_count_report(report))
+
 
 # ── Entry point ───────────────────────────────────────────────────────────────
 
