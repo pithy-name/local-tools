@@ -124,6 +124,18 @@ ocr:
 
 **Changing the spaCy model:** update `spacy_model` in `config.yaml` and re-run `setup.sh` (or `python -m spacy download <model>`) to download the new model.
 
+## Keyword-only mode (no-spaCy fast path)
+
+Set `entities: []` in `config.yaml` to run **keyword-only** — deterministic find→replace from your `custom_keywords`, no NER. Text files (Markdown, HTML) are redacted by a small stdlib engine (`keyword_redactor`), and the 750 MB spaCy model is loaded **only when it's actually needed** — i.e. when an image or PDF is present (those still need the analyzer to match keywords against OCR'd text):
+
+| Mode | Image/PDF in the input? | spaCy model |
+|---|---|---|
+| Keyword-only (`entities: []`) | none (or all in `skip_extensions`) | **not loaded** — fast |
+| Keyword-only (`entities: []`) | yes (not skipped) | loaded (for the image/PDF path) |
+| NER (`entities` non-empty) | any | loaded |
+
+So a **text-only keyword run loads no model at all**. To guarantee the fast path even if stray images are present, add image/PDF types to `skip_extensions`.
+
 ## Supported entity types
 
 | Type | Examples |
