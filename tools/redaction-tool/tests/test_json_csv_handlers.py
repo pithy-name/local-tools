@@ -75,6 +75,28 @@ class TestJsonEndToEnd(unittest.TestCase):
         self.assertEqual(out, {"body": "[PERSON_A]"})
 
 
+class TestRunLevelCoverage(unittest.TestCase):
+    def test_csv_redacted_via_run_dispatch(self):
+        tmp = Path(tempfile.mkdtemp())
+        (tmp / "t.csv").write_text("name\nMary Bello\n", encoding="utf-8")
+        cfg = _kw_cfg([{"find": "Mary Bello", "replace": "[PERSON_A]"}])
+        redact.run(tmp, cfg, dry_run=False)
+        out = (tmp / "redacted" / "t.csv").read_text(encoding="utf-8")
+        self.assertIn("[PERSON_A]", out)
+        self.assertNotIn("Mary Bello", out)
+
+    def test_per_pseudonym_report_emitted_by_run(self):
+        tmp = Path(tempfile.mkdtemp())
+        (tmp / "n.md").write_text("Mary Bello and Mary Bello", encoding="utf-8")
+        cfg = _kw_cfg([{"find": "Mary Bello", "replace": "[PERSON_A]"}])
+        with self.assertLogs("redact", level="INFO") as cm:
+            redact.run(tmp, cfg, dry_run=False)
+        log = "\n".join(cm.output)
+        self.assertIn("[PERSON_A]", log)
+        self.assertIn("text-sub: 2", log)
+        self.assertIn("blackout: N/A", log)
+
+
 class TestLeakGuard(unittest.TestCase):
     def _dir_with_unhandled(self):
         tmp = Path(tempfile.mkdtemp())
