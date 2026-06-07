@@ -719,8 +719,8 @@ def _iter_json_strings(obj):
             yield from _iter_json_strings(v)
 
 
-def _texts_for_scan(src: Path, ext: str):
-    """Yield the text chunks to NER-scan for one file."""
+def _texts_for_scan(src: Path, ext: str, cfg: dict):
+    """Yield the text chunks to NER-scan for one file (images via OCR)."""
     if ext in (".md", ".txt"):
         yield src.read_text(encoding="utf-8", errors="replace")
     elif ext == ".json":
@@ -730,6 +730,26 @@ def _texts_for_scan(src: Path, ext: str):
         with src.open(encoding="utf-8-sig", newline="") as f:
             for row in csv.reader(f):
                 yield from row
+    elif ext in (".html", ".htm"):
+        from bs4 import BeautifulSoup
+        soup = BeautifulSoup(src.read_text(encoding="utf-8", errors="replace"),
+                             "html.parser")
+        yield soup.get_text(" ")
+    elif ext in (".png", ".jpg", ".jpeg", ".gif", ".webp"):
+        from PIL import Image
+        img = Image.open(str(src)).convert("RGB")
+        for obs in ocr_image(img, cfg):
+            yield obs["text"]
+    elif ext == ".pdf":
+        import fitz
+        doc = fitz.open(str(src))
+        try:
+            for page in doc:
+                text = page.get_text().strip()  # digital pages; scanned-page OCR TODO
+                if text:
+                    yield text
+        finally:
+            doc.close()
 
 
 def scan(input_dir: Path, cfg: dict) -> None:
@@ -744,7 +764,8 @@ def scan(input_dir: Path, cfg: dict) -> None:
     output_dir = input_dir / cfg["output_dir"]
     files = [f for f in sorted(input_dir.rglob("*"))
              if f.is_file() and output_dir not in f.parents]
-    SCAN_EXTS = {".md", ".txt", ".json", ".csv"}
+    SCAN_EXTS = {".md", ".txt", ".json", ".csv", ".html", ".htm",
+                 ".png", ".jpg", ".jpeg", ".gif", ".webp", ".pdf"}
 
     texts, scanned, skipped = [], 0, 0
     for src in files:
@@ -753,15 +774,15 @@ def scan(input_dir: Path, cfg: dict) -> None:
             skipped += 1
             continue
         try:
-            texts.extend(_texts_for_scan(src, ext))
+            texts.extend(_texts_for_scan(src, ext, cfg))  # images via OCR
             scanned += 1
         except Exception as e:
             log.error(f"  scan skip {src.relative_to(input_dir)}: {e}")
 
     found = collect_entities(
         texts, lambda t: analyzer.analyze(text=t, entities=entities, language="en"))
-    log.info(f"\n[SCAN] {scanned} text file(s) scanned, {skipped} non-text skipped "
-             f"(images/PDF/HTML scanning not yet implemented).\n"
+    log.info(f"\n[SCAN] {scanned} file(s) scanned, {skipped} unsupported skipped "
+             f"(scanned-PDF-page OCR is still TODO).\n"
              + render_scan_report(found))
 
 
