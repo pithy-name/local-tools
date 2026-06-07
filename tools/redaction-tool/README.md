@@ -8,35 +8,35 @@ A fully local, air-gapped PII redaction tool for Notion exports. Scans a Notion 
 
 ## How it works
 
-- **Text files** (`.md`, `.html`) — spaCy + [Presidio](https://github.com/microsoft/presidio) detect PII spans and replace them with a configurable placeholder (default: `█████`)
+- **Text files** (`.md`, `.txt`, `.html`, `.json`, `.csv`) — redacted by deterministic find→replace from your keyword list (case-insensitive), and/or spaCy + [Presidio](https://github.com/microsoft/presidio) NER. JSON is **values-only** (keys/numbers untouched) and re-serialized as valid JSON; CSV redacts every cell. Replacement is a configurable placeholder (default `█████`) or your own per-keyword pseudonyms.
 - **PDFs** — digital text pages use PyMuPDF's native redaction annotations to permanently remove text from the PDF structure; scanned pages are OCR'd and PII regions are blacked out as pixels
 - **Images** (`.png`, `.jpg`, `.gif`, `.webp`) — OCR locates PII, then black filled rectangles are drawn over those regions
-- All other files are copied unchanged; originals are never modified
+- **Unhandled types** (`.zip`, `.xlsx`, …) are **not** copied into `redacted/` by default (leak guard — an unredacted file there looks safe and isn't); set `copy_unhandled: true` to mirror them. Originals are never modified.
+
+There are two find modes: **keyword-only** (`entities: []` — no spaCy model for text-only input, fast + auditable) and **NER**. A discovery mode, **`--scan`**, lists candidate identities without redacting (see below).
 
 OCR runs via Apple Vision (on-device Neural Engine, preferred) with an automatic fallback to Tesseract.
 
 ## Requirements
 
-- Python 3.9+
+- **Python 3.10+ for the venv** — build it with `python3.11`. The spaCy stack needs `thinc>=8.3.12`, which requires Python ≥3.10; a 3.9 venv fails to install. (The stdlib-only parts run on 3.9.)
 - macOS (Apple Silicon recommended for Vision OCR; Intel Macs and Linux work via Tesseract fallback)
 - Homebrew (optional, for Tesseract)
 
 ## Setup
 
-```bash
-bash setup.sh
-```
-
-This creates a `.venv` virtualenv, installs all dependencies, downloads the configured spaCy model (~750 MB by default), and reports whether Apple Vision OCR is available.
+> **Note:** `setup.sh` currently hardcodes `python3` and **fails on a system Python 3.9** (the spaCy install needs ≥3.10). Use the manual setup with `python3.11` below until that's fixed.
 
 **Manual setup:**
 
 ```bash
-python3 -m venv .venv
+python3.11 -m venv .venv
 source .venv/bin/activate
-pip install -r requirements.txt
+pip install -r requirements.txt click       # 'click' is required by `spacy download`
 python -m spacy download en_core_web_lg
 ```
+
+This creates a `.venv`, installs dependencies, and downloads the spaCy model (~750 MB).
 
 **Tesseract fallback (non-macOS or older macOS):**
 
@@ -56,9 +56,14 @@ python redact.py /path/to/notion-export --dry-run
 # Redact — output goes to /path/to/notion-export/redacted/
 python redact.py /path/to/notion-export
 
+# Discover: list candidate identities (NER) without redacting — to seed custom_keywords
+python redact.py /path/to/notion-export --scan
+
 # Use a specific config file
 python redact.py /path/to/notion-export --config /path/to/config.yaml
 ```
+
+Recommended flow for trustworthy keyword redaction: `--scan` to surface candidates → curate them into `custom_keywords` (with `entities: []`) → redact → **review the output yourself** before sharing.
 
 After a run, a summary is printed:
 

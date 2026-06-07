@@ -12,7 +12,11 @@ entities:
   - LOCATION
 
 # Exact strings to ALWAYS redact, regardless of NLP detection.
-# Uses word-boundary matching, case-sensitive.
+# Uses word-boundary matching, CASE-INSENSITIVE.
+#
+# Tip: set `entities: []` above for KEYWORD-ONLY mode — deterministic
+# find->replace from this list, with NO spaCy model loaded for text-only input
+# (fast, auditable). See the README "Keyword-only mode" section.
 #
 # Two formats:
 #
@@ -53,6 +57,13 @@ spacy_model: en_core_web_lg
 # Your originals are NEVER modified.
 output_dir: redacted
 
+# Leak guard. When false (default), file types redact.py does NOT handle
+# (e.g. .zip, .xlsx, .docx) are LEFT IN THE SOURCE and reported as
+# "Not copied (unhandled)" — they are not placed in redacted/, since an
+# unredacted file in a folder named redacted/ looks safe and isn't. Set true to
+# mirror the input (copy unhandled files through unchanged).
+copy_unhandled: false
+
 # File types to exclude entirely — not processed, not copied to redacted/.
 # Useful for binary formats that can't be text-redacted (video, audio)
 # or types you want to keep out of downstream tools altogether.
@@ -62,11 +73,17 @@ skip_extensions:
   - .mov
   - .m4v
 
-# File types to process. Everything else is copied as-is.
+# Handled formats (for reference): text — .md .txt .html .json .csv (find->replace /
+# pseudonyms); binary — .pdf .png .jpg .jpeg .gif .webp (OCR + black-box).
+# NOTE: this list is currently NOT enforced by the dispatch (a known limitation) —
+# redact.py routes by the file's extension directly, and unhandled types follow
+# `copy_unhandled` above. `skip_extensions` IS honored.
 include_extensions:
   - .md
   - .html
   - .htm
+  - .json
+  - .csv
   - .png
   - .jpg
   - .jpeg
