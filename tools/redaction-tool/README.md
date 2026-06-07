@@ -124,6 +124,10 @@ ocr:
 
 **Changing the spaCy model:** update `spacy_model` in `config.yaml` and re-run `setup.sh` (or `python -m spacy download <model>`) to download the new model.
 
+## Leak guard: unhandled file types
+
+By default, files redact.py doesn't handle (e.g. `.zip`, `.xlsx`, `.docx`) are **not** copied into `redacted/` — they're reported as "Not copied (unhandled)" and left in the source. Reason: an *unredacted* file sitting in a folder named `redacted/` looks safe and isn't (a leak vector if you share or feed `redacted/` to a cloud RAG). To mirror the input instead (copy unhandled files through unchanged), set `copy_unhandled: true` in `config.yaml`.
+
 ## Keyword-only mode (no-spaCy fast path)
 
 Set `entities: []` in `config.yaml` to run **keyword-only** — deterministic find→replace from your `custom_keywords`, no NER. Text files (Markdown, HTML) are redacted by a small stdlib engine (`keyword_redactor`), and the 750 MB spaCy model is loaded **only when it's actually needed** — i.e. when an image or PDF is present (those still need the analyzer to match keywords against OCR'd text):

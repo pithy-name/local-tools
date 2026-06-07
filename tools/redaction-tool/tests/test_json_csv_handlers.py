@@ -75,5 +75,26 @@ class TestJsonEndToEnd(unittest.TestCase):
         self.assertEqual(out, {"body": "[PERSON_A]"})
 
 
+class TestLeakGuard(unittest.TestCase):
+    def _dir_with_unhandled(self):
+        tmp = Path(tempfile.mkdtemp())
+        (tmp / "note.md").write_text("hi", encoding="utf-8")
+        (tmp / "data.zip").write_bytes(b"PK fake-zip")
+        return tmp
+
+    def test_unhandled_not_copied_by_default(self):
+        tmp = self._dir_with_unhandled()
+        cfg = _kw_cfg([])  # keyword-only, no model needed
+        redact.run(tmp, cfg, dry_run=False)
+        self.assertFalse((tmp / "redacted" / "data.zip").exists())
+
+    def test_unhandled_copied_when_opted_in(self):
+        tmp = self._dir_with_unhandled()
+        cfg = _kw_cfg([])
+        cfg["copy_unhandled"] = True
+        redact.run(tmp, cfg, dry_run=False)
+        self.assertTrue((tmp / "redacted" / "data.zip").exists())
+
+
 if __name__ == "__main__":
     unittest.main()

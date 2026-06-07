@@ -49,6 +49,7 @@ DEFAULT_CONFIG: dict = {
     "replacement": "█████",      # what replaced text looks like
     "spacy_model": "en_core_web_lg",  # change to en_core_web_sm for a ~12MB model
     "output_dir": "redacted",    # created inside input_dir
+    "copy_unhandled": False,     # leak guard: don't copy unhandled file types into redacted/
     "include_extensions": [
         ".md", ".html", ".htm",
         ".pdf",
@@ -586,7 +587,7 @@ def run(input_dir: Path, cfg: dict, dry_run: bool) -> None:
 
     skip_exts = set(cfg.get("skip_extensions", []))
     stats: dict = {"md": 0, "html": 0, "json": 0, "csv": 0, "pdf": 0, "img": 0,
-                   "copy": 0, "skip": 0, "errors": 0}
+                   "copy": 0, "uncopied": 0, "skip": 0, "errors": 0}
     total_redactions = 0
 
     # Collect all files first (excluding the output dir) so we can decide what to load.
@@ -658,11 +659,16 @@ def run(input_dir: Path, cfg: dict, dry_run: bool) -> None:
                 total_redactions += n
 
             else:
-                # Non-targeted file type: copy as-is
-                if not dry_run:
-                    dst.parent.mkdir(parents=True, exist_ok=True)
-                    shutil.copy2(src, dst)
-                stats["copy"] += 1
+                # Unhandled type. Leak guard (default): do NOT copy into redacted/
+                # — an unredacted file there looks safe but isn't. Opt in with
+                # copy_unhandled: true to mirror the input instead.
+                if cfg.get("copy_unhandled", False):
+                    if not dry_run:
+                        dst.parent.mkdir(parents=True, exist_ok=True)
+                        shutil.copy2(src, dst)
+                    stats["copy"] += 1
+                else:
+                    stats["uncopied"] += 1
 
         except Exception as exc:
             log.error(f"  ERR  {rel}: {exc}")
@@ -679,10 +685,16 @@ def run(input_dir: Path, cfg: dict, dry_run: bool) -> None:
         f"  PDF files        : {stats['pdf']}\n"
         f"  Image files      : {stats['img']}\n"
         f"  Copied unchanged : {stats['copy']}\n"
+        f"  Not copied (unhandled) : {stats['uncopied']}\n"
         f"  Skipped entirely : {stats['skip']}\n"
         f"  Errors           : {stats['errors']}\n"
         + (f"  Output at        : {output_dir}\n" if not dry_run else "")
     )
+
+    if stats["uncopied"]:
+        log.info(f"  Note: {stats['uncopied']} unhandled file(s) were NOT copied into "
+                 f"redacted/ (leak guard). They remain in the source; set "
+                 f"copy_unhandled: true in config to mirror them instead.")
 
     # Keyword-only mode: per-pseudonym count report. text-sub counts come from the
     # keyword_redactor; blackout is N/A until the image/PDF path reports per-keyword
