@@ -19,10 +19,13 @@ engine), `report_format.py` (stdlib count + scan reports).
 ## Commands
 
 ```bash
-# Build the venv with PYTHON 3.11 — system python3 is 3.9 and the spaCy stack
-# needs >=3.10. (setup.sh still hardcodes python3 and is broken on 3.9; fix pending.)
+# setup.sh auto-selects python3.11 (falls back to a newer 3.x if absent), builds
+# the venv, installs deps, and downloads the model. Tested on 3.11 only.
+bash setup.sh
+
+# Manual equivalent (system python3 is 3.9 — too old; build with 3.11):
 python3.11 -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt click            # 'click' is needed for `spacy download`
+pip install -r requirements.txt                  # click is pinned in requirements
 python -m spacy download en_core_web_lg
 
 python redact.py <dir> --dry-run                 # preview (no files written)

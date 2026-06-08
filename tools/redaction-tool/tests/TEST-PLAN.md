@@ -1,9 +1,9 @@
 # Test Plan — redaction-tool dogfood
 
 **Date:** 2026-05-28
-**Tool under test:** `tools/redaction-tool/redact.py` (as-is; current Notion-export contract, NOT the deferred repo-mode)
+**Tool under test:** `tools/redaction-tool/redact.py` (as-is; current folder-of-files contract, NOT the deferred repo-mode)
 **Sandbox:** `/tmp/redaction-dogfood/` (live workspace untouched, per project rule)
-**Status:** ✅ EXECUTED 2026-05-29 — results in `output/TEST-RESULTS.md`. Ran on `en_core_web_sm` (text-only). Verdict: functional PARTIAL PASS; gap premise CONFIRMED.
+**Status:** Runnable — a reusable acceptance-/gap-criteria plan you can run against `redact.py`. The mock corpus, configs, and expected outputs are in this folder; see `README.md` → "How to re-run".
 
 ---
 

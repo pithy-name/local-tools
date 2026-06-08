@@ -1,5 +1,5 @@
 # ── redact.py configuration ──────────────────────────────────────────────────
-# Edit this file, then run: python redact.py /path/to/notion-export
+# Edit this file, then run: python redact.py /path/to/folder
 
 # Named entity types Presidio/spaCy will detect automatically.
 # Available types: PERSON, EMAIL_ADDRESS, PHONE_NUMBER, ORGANIZATION,

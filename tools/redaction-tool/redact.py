@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
-"""redact.py — Fully-local PII redaction for Notion exports
+"""redact.py — Fully-local PII redaction for a folder of files
 ──────────────────────────────────────────────────────────────
 Handles: Markdown, HTML, PDF (digital + scanned), Images
 No network calls. All NLP and OCR runs on-device.
 
 Usage:
-    python redact.py /path/to/notion/export
-    python redact.py /path/to/notion/export --config config.yaml
-    python redact.py /path/to/notion/export --dry-run
+    python redact.py /path/to/folder
+    python redact.py /path/to/folder --config config.yaml
+    python redact.py /path/to/folder --dry-run
 """
 
 from __future__ import annotations
@@ -696,9 +696,10 @@ def run(input_dir: Path, cfg: dict, dry_run: bool) -> None:
                  f"redacted/ (leak guard). They remain in the source; set "
                  f"copy_unhandled: true in config to mirror them instead.")
 
-    # Keyword-only mode: per-pseudonym count report. text-sub counts come from the
-    # keyword_redactor; blackout is N/A until the image/PDF path reports per-keyword
-    # counts (binary count parity, a later milestone).
+    # Keyword-only mode: per-pseudonym count report. text-sub = keyword_redactor's real
+    # per-keyword tallies. blackout is passed None, so it renders "N/A" (image/PDF redaction
+    # not engaged). The image/PDF path doesn't yet count per keyword, so blackout never shows
+    # real numbers — see the backlog (four-state design: N/A / 0 / count / Unimplemented).
     if kr is not None and kr.mappings:
         from report_format import build_count_report, render_count_report
         report = build_count_report(kr.mappings, kr.counts)
@@ -792,9 +793,9 @@ def main() -> None:
     check_imports()
 
     parser = argparse.ArgumentParser(
-        description="Local PII redaction for Notion exports — no cloud, no network."
+        description="Local PII redaction for a folder of files — no cloud, no network."
     )
-    parser.add_argument("input_dir", help="Path to your Notion export folder")
+    parser.add_argument("input_dir", help="Path to the folder to redact")
     parser.add_argument(
         "--config", default="config.yaml",
         help="Path to YAML config file (default: config.yaml in current dir)"
