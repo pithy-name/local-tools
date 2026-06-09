@@ -619,16 +619,18 @@ def process_pdf(src: Path, dst: Path, analyzer, cfg: dict, dry_run: bool):
 
 # ── Orchestration ─────────────────────────────────────────────────────────────
 
-def _copy_or_skip_unhandled(src: Path, dst: Path, cfg: dict, dry_run: bool, stats: dict) -> None:
+def _copy_or_skip_unhandled(src: Path, dst: Path, cfg: dict, dry_run: bool, stats: dict) -> bool:
     """Leak guard: copy an unhandled/not-allowlisted file into redacted/ only if
-    copy_unhandled is set; otherwise leave it in the source and tally it."""
+    copy_unhandled is set; otherwise leave it in the source and tally it. Returns True
+    when the file was left uncopied (so the caller can record its path)."""
     if cfg.get("copy_unhandled", False):
         if not dry_run:
             dst.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(src, dst)
         stats["copy"] += 1
-    else:
-        stats["uncopied"] += 1
+        return False
+    stats["uncopied"] += 1
+    return True
 
 
 def run(input_dir: Path, cfg: dict, dry_run: bool) -> None:
@@ -666,6 +668,7 @@ def run(input_dir: Path, cfg: dict, dry_run: bool) -> None:
     include_set = set(_normalize_extensions(cfg.get("include_extensions", [])))
     blackout_counts = Counter()   # per-keyword image/PDF redaction counts
     binary_engaged = False        # did any image/PDF get processed this run?
+    uncopied_paths = []           # leak guard: files left in the source (not copied)
     for src in files:
         rel = src.relative_to(input_dir)
         dst = output_dir / rel
@@ -678,7 +681,8 @@ def run(input_dir: Path, cfg: dict, dry_run: bool) -> None:
                 continue
             if include_set and ext not in include_set:
                 # not in the allowlist → unhandled (leak guard / copy_unhandled)
-                _copy_or_skip_unhandled(src, dst, cfg, dry_run, stats)
+                if _copy_or_skip_unhandled(src, dst, cfg, dry_run, stats):
+                    uncopied_paths.append(str(rel))
                 continue
             if ext == ".md":
                 n = process_markdown(src, dst, analyzer, cfg, kw_replacements, dry_run, kr=kr)
@@ -722,7 +726,8 @@ def run(input_dir: Path, cfg: dict, dry_run: bool) -> None:
 
             else:
                 # Allowlisted but no handler for this type → leak guard.
-                _copy_or_skip_unhandled(src, dst, cfg, dry_run, stats)
+                if _copy_or_skip_unhandled(src, dst, cfg, dry_run, stats):
+                    uncopied_paths.append(str(rel))
 
         except Exception as exc:
             log.error(f"  ERR  {rel}: {exc}")
@@ -749,6 +754,8 @@ def run(input_dir: Path, cfg: dict, dry_run: bool) -> None:
         log.info(f"  Note: {stats['uncopied']} unhandled file(s) were NOT copied into "
                  f"redacted/ (leak guard). They remain in the source; set "
                  f"copy_unhandled: true in config to mirror them instead.")
+        for p in uncopied_paths:
+            log.info(f"    not copied: {p}")
 
     # Keyword-only mode: per-pseudonym count report. text-sub = keyword_redactor's real
     # per-keyword text tallies; blackout = real per-keyword counts from the image/PDF path.

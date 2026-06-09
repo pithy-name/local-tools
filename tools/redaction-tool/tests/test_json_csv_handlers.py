@@ -117,6 +117,14 @@ class TestLeakGuard(unittest.TestCase):
         redact.run(tmp, cfg, dry_run=False)
         self.assertTrue((tmp / "redacted" / "data.zip").exists())
 
+    def test_unhandled_paths_listed_in_summary(self):
+        tmp = self._dir_with_unhandled()  # note.md + data.zip
+        cfg = _kw_cfg([])
+        with self.assertLogs("redact", level="INFO") as cm:
+            redact.run(tmp, cfg, dry_run=False)
+        log = "\n".join(cm.output)
+        self.assertIn("not copied: data.zip", log)  # the path, not just the count
+
 
 if __name__ == "__main__":
     unittest.main()
