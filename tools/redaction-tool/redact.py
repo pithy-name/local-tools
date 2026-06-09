@@ -52,7 +52,7 @@ DEFAULT_CONFIG: dict = {
     "output_dir": "redacted",    # created inside input_dir
     "copy_unhandled": False,     # leak guard: don't copy unhandled file types into redacted/
     "include_extensions": [          # allowlist of types to process (handled set)
-        ".md", ".html", ".htm", ".json", ".csv",
+        ".md", ".txt", ".html", ".htm", ".json", ".csv",
         ".pdf",
         ".png", ".jpg", ".jpeg", ".gif", ".webp",
     ],
@@ -218,6 +218,16 @@ def analyze(text: str, analyzer, cfg: dict, kw_replacements: dict) -> list:
     )
 
 
+def _deoverlap(results: list) -> list:
+    """Drop spans fully contained within a longer/higher-priority span."""
+    by_length = sorted(results, key=lambda r: r.end - r.start, reverse=True)
+    kept = []
+    for r in by_length:
+        if not any(k.start <= r.start and r.end <= k.end for k in kept):
+            kept.append(r)
+    return kept
+
+
 def anonymize(
     text: str,
     results: list,
@@ -228,12 +238,14 @@ def anonymize(
     Replace detected spans with their appropriate replacement.
     Custom keywords (KW_N) use their configured string if set; everything else
     uses default_replacement. Processes spans high→low to keep offsets valid.
+    Overlapping/contained spans: the longer (outer) span wins; the shorter is dropped.
     """
     if not results:
         return text
     kw_replacements = kw_replacements or {}
+    kept = _deoverlap(results)
     buf = list(text)
-    for r in sorted(results, key=lambda r: r.start, reverse=True):
+    for r in sorted(kept, key=lambda r: r.start, reverse=True):
         per_entity = kw_replacements.get(r.entity_type)  # None if not a KW entity
         replacement = per_entity if per_entity is not None else default_replacement
         buf[r.start:r.end] = list(replacement)
@@ -253,7 +265,8 @@ def _redact_text(text, analyzer, cfg: dict, kw_replacements: dict, kr) -> tuple:
         out = kr.redact(text)
         return out, sum(kr.counts.values()) - before
     results = analyze(text, analyzer, cfg, kw_replacements)
-    return anonymize(text, results, cfg["replacement"], kw_replacements), len(results)
+    kept = _deoverlap(results)
+    return anonymize(text, kept, cfg["replacement"], kw_replacements), len(kept)
 
 
 def process_markdown(
@@ -473,8 +486,24 @@ def ocr_image(img, cfg: dict) -> list[Observation]:
         return ocr_apple_vision(img)
     elif cfg["ocr"].get("fallback_tesseract", True):
         return ocr_tesseract(img)
-    log.warning("No OCR backend available — scanned content will not be redacted")
-    return []
+    raise RuntimeError(
+        "No OCR backend available (Apple Vision and Tesseract both disabled or missing). "
+        "Cannot safely process images — original would be copied unredacted."
+    )
+
+
+def _ocr_backend_available(cfg: dict) -> bool:
+    """Return True if at least one OCR backend will work for this config."""
+    if cfg["ocr"].get("use_apple_vision", True) and apple_vision_available():
+        return True
+    if cfg["ocr"].get("fallback_tesseract", True):
+        try:
+            import pytesseract  # noqa: F401
+            if shutil.which("tesseract"):
+                return True
+        except ImportError:
+            pass
+    return False
 
 
 # ── Image redaction ───────────────────────────────────────────────────────────
@@ -570,18 +599,26 @@ def process_pdf(src: Path, dst: Path, analyzer, cfg: dict, dry_run: bool):
 
             # visual redaction only (no text replacement); keyword-only → no NER
             results = [] if no_detect else analyze(page_text, analyzer, cfg, ent_filter)
-            total += len(results)
 
             for r in results:
                 find = kw_finds.get(r.entity_type)
-                if find is not None:
-                    blackout[find] += 1
-                # Get the exact phrase from the extracted text
                 phrase = page_text[r.start:r.end].strip()
                 if not phrase:
                     continue
-                # search_for returns a list of Rects/Quads covering the phrase
-                for quad in out_page.search_for(phrase):
+                # Count and annotate only when search_for confirms placement.
+                # search_for returns [] on line-wrapped/ligature/whitespace mismatch —
+                # incrementing before the call would silently report a phantom redaction.
+                quads = out_page.search_for(phrase)
+                if not quads:
+                    log.warning(
+                        f"  PDF p{page_num+1}: phrase not found in rendered layout "
+                        f"(possible line-wrap/ligature): {phrase!r}"
+                    )
+                    continue
+                total += 1
+                if find is not None:
+                    blackout[find] += 1
+                for quad in quads:
                     out_page.add_redact_annot(quad, fill=(0, 0, 0))
 
             # Apply: permanently removes text and renders black boxes
@@ -635,13 +672,14 @@ def _copy_or_skip_unhandled(src: Path, dst: Path, cfg: dict, dry_run: bool, stat
     return True
 
 
-def run(input_dir: Path, cfg: dict, dry_run: bool) -> None:
+def run(input_dir: Path, cfg: dict, dry_run: bool) -> int:
+    """Process all files in input_dir. Returns the number of per-file errors."""
     output_dir = input_dir / cfg["output_dir"]
     if not dry_run:
         output_dir.mkdir(exist_ok=True)
 
     skip_exts = set(cfg.get("skip_extensions", []))
-    stats: dict = {"md": 0, "html": 0, "json": 0, "csv": 0, "pdf": 0, "img": 0,
+    stats: dict = {"md": 0, "txt": 0, "html": 0, "json": 0, "csv": 0, "pdf": 0, "img": 0,
                    "copy": 0, "uncopied": 0, "skip": 0, "errors": 0}
     total_redactions = 0
 
@@ -655,8 +693,21 @@ def run(input_dir: Path, cfg: dict, dry_run: bool) -> None:
     # keyword run loads no model at all; a text-only config never loads one either.
     BINARY_EXTS = {".pdf", ".png", ".jpg", ".jpeg", ".gif", ".webp"}
     keyword_only = not cfg.get("entities")
-    has_binary = any(f.suffix.lower() in BINARY_EXTS and f.suffix.lower() not in skip_exts
-                     for f in files)
+    include_set = set(_normalize_extensions(cfg.get("include_extensions", [])))
+    # Only count a binary as "will be processed" if it passes the include_extensions allowlist.
+    has_binary = any(
+        f.suffix.lower() in BINARY_EXTS
+        and f.suffix.lower() not in skip_exts
+        and (not include_set or f.suffix.lower() in include_set)
+        for f in files
+    )
+    if has_binary and not _ocr_backend_available(cfg):
+        log.error(
+            "No OCR backend (Apple Vision or Tesseract) is available, but images/PDFs "
+            "are present. Cannot safely process — original files would be copied unredacted. "
+            "Install Tesseract (brew install tesseract) or run on macOS with Apple Vision."
+        )
+        sys.exit(1)
     kr = make_keyword_redactor_from_config(cfg) if keyword_only else None
     if (not keyword_only) or has_binary:
         log.info(f"Loading NLP model '{cfg.get('spacy_model', 'en_core_web_lg')}' "
@@ -671,6 +722,7 @@ def run(input_dir: Path, cfg: dict, dry_run: bool) -> None:
     blackout_counts = Counter()   # per-keyword image/PDF redaction counts
     binary_engaged = False        # did any image/PDF get processed this run?
     uncopied_paths = []           # leak guard: files left in the source (not copied)
+    error_files = []              # files that raised during processing
     for src in files:
         rel = src.relative_to(input_dir)
         dst = output_dir / rel
@@ -690,6 +742,12 @@ def run(input_dir: Path, cfg: dict, dry_run: bool) -> None:
                 n = process_markdown(src, dst, analyzer, cfg, kw_replacements, dry_run, kr=kr)
                 log.info(f"  MD   {rel}  → {n} redaction(s)")
                 stats["md"] += 1
+                total_redactions += n
+
+            elif ext == ".txt":
+                n = process_markdown(src, dst, analyzer, cfg, kw_replacements, dry_run, kr=kr)
+                log.info(f"  TXT  {rel}  → {n} redaction(s)")
+                stats["txt"] += 1
                 total_redactions += n
 
             elif ext in (".html", ".htm"):
@@ -734,12 +792,14 @@ def run(input_dir: Path, cfg: dict, dry_run: bool) -> None:
         except Exception as exc:
             log.error(f"  ERR  {rel}: {exc}")
             stats["errors"] += 1
+            error_files.append(str(rel))
 
     mode = "[DRY RUN] " if dry_run else ""
     log.info(
         f"\n{mode}{'─' * 52}\n"
         f"  Total redactions : {total_redactions}\n"
         f"  Markdown files   : {stats['md']}\n"
+        f"  Plain text files : {stats['txt']}\n"
         f"  HTML files       : {stats['html']}\n"
         f"  JSON files       : {stats['json']}\n"
         f"  CSV files        : {stats['csv']}\n"
@@ -759,6 +819,12 @@ def run(input_dir: Path, cfg: dict, dry_run: bool) -> None:
         for p in uncopied_paths:
             log.info(f"    not copied: {p}")
 
+    if error_files:
+        log.warning(
+            f"\n  FAILED — {len(error_files)} file(s) could not be processed:\n"
+            + "\n".join(f"    {p}" for p in error_files)
+        )
+
     # Keyword-only mode: per-pseudonym count report. text-sub = keyword_redactor's real
     # per-keyword text tallies; blackout = real per-keyword counts from the image/PDF path.
     # blackout_counts is None when no image/PDF ran → the column renders "N/A" (mechanism not
@@ -769,6 +835,8 @@ def run(input_dir: Path, cfg: dict, dry_run: bool) -> None:
                                     blackout_counts if binary_engaged else None)
         log.info("\n  Per-pseudonym counts (text-sub | blackout):\n"
                  + render_count_report(report))
+
+    return stats["errors"]
 
 
 # ── Scan (discovery) ──────────────────────────────────────────────────────────
@@ -840,6 +908,15 @@ def scan(input_dir: Path, cfg: dict) -> None:
     SCAN_EXTS = {".md", ".txt", ".json", ".csv", ".html", ".htm",
                  ".png", ".jpg", ".jpeg", ".gif", ".webp", ".pdf"}
 
+    OCR_EXTS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".pdf"}
+    has_ocr_files = any(f.suffix.lower() in OCR_EXTS for f in files
+                        if f.suffix.lower() in SCAN_EXTS)
+    if has_ocr_files and not _ocr_backend_available(cfg):
+        log.warning(
+            "OCR backend unavailable (Apple Vision and Tesseract both disabled or missing). "
+            "Image and PDF files will be skipped during scan."
+        )
+
     texts, scanned, skipped = [], 0, 0
     for src in files:
         ext = src.suffix.lower()
@@ -902,7 +979,9 @@ def main() -> None:
     if args.dry_run:
         log.info("DRY RUN mode — no files will be written")
 
-    run(input_dir, cfg, dry_run=args.dry_run)
+    errors = run(input_dir, cfg, dry_run=args.dry_run)
+    if errors:
+        sys.exit(1)
 
 
 if __name__ == "__main__":

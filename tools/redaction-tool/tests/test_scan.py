@@ -89,5 +89,41 @@ class TestTextsForScanPdf(unittest.TestCase):
         self.assertEqual(called, [])               # digital page must not invoke OCR
 
 
+class TestScanOcrPreflight(unittest.TestCase):
+    """Review finding: scan() has no _ocr_backend_available preflight.
+
+    run() sys.exit(1) if no OCR + binaries present. scan() silently falls through
+    to per-file RuntimeError logs, giving no upfront notice. Fix: log a WARNING at
+    scan() start when images/PDFs are in scope and no OCR backend is available.
+    """
+
+    def test_scan_warns_upfront_when_no_ocr_and_images_present(self):
+        """scan() must log a WARNING about OCR unavailability before processing files."""
+        tmpdir = Path(tempfile.mkdtemp())
+        from PIL import Image
+        img = Image.new("RGB", (4, 4), "white")
+        img.save(str(tmpdir / "photo.png"))
+        (tmpdir / "note.md").write_text("hello", encoding="utf-8")
+
+        cfg = dict(redact.DEFAULT_CONFIG)
+        cfg["entities"] = ["PERSON"]
+
+        orig_av = redact.apple_vision_available
+        orig_backend = redact._ocr_backend_available
+        redact.apple_vision_available = lambda: False
+        redact._ocr_backend_available = lambda c: False
+        try:
+            with self.assertLogs("redact", level="WARNING") as cm:
+                redact.scan(tmpdir, cfg)
+            # assertLogs already filters to WARNING+; check for OCR warning directly
+            self.assertTrue(
+                any("OCR" in m for m in cm.output),
+                f"expected a WARNING about OCR unavailability; got: {cm.output}"
+            )
+        finally:
+            redact.apple_vision_available = orig_av
+            redact._ocr_backend_available = orig_backend
+
+
 if __name__ == "__main__":
     unittest.main()
