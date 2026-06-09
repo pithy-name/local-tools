@@ -47,7 +47,7 @@ also run under system `python3`.
 - `copy_unhandled: false` (default) = unhandled types (.zip/.xlsx/…) are NOT copied into `redacted/` (leak guard); set true to mirror the input
 - `custom_keywords` matching is CASE-INSENSITIVE, word-boundary
 - Apple Vision OCR (macOS) >> Tesseract; check setup output for which is active
-- `include_extensions` in config is currently NOT enforced by the dispatch (known limitation); `skip_extensions` IS
+- `include_extensions` is an enforced allowlist (only listed + handled types are processed); `--include .md,.txt` overrides it per run; `skip_extensions` is checked first
 
 ## Config
 

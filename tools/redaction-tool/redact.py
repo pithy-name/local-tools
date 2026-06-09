@@ -51,8 +51,8 @@ DEFAULT_CONFIG: dict = {
     "spacy_model": "en_core_web_lg",  # change to en_core_web_sm for a ~12MB model
     "output_dir": "redacted",    # created inside input_dir
     "copy_unhandled": False,     # leak guard: don't copy unhandled file types into redacted/
-    "include_extensions": [
-        ".md", ".html", ".htm",
+    "include_extensions": [          # allowlist of types to process (handled set)
+        ".md", ".html", ".htm", ".json", ".csv",
         ".pdf",
         ".png", ".jpg", ".jpeg", ".gif", ".webp",
     ],
@@ -76,6 +76,18 @@ def load_config(path: Optional[str]) -> dict:
             else:
                 cfg[k] = v
     return cfg
+
+
+def _normalize_extensions(items) -> list:
+    """Lowercase each extension and ensure a leading dot. 'MD' / '.Json' → '.md' / '.json'."""
+    out = []
+    for it in items:
+        e = str(it).strip().lower()
+        if e and not e.startswith("."):
+            e = "." + e
+        if e:
+            out.append(e)
+    return out
 
 
 # ── Import checks ─────────────────────────────────────────────────────────────
@@ -477,14 +489,22 @@ def redact_image_pixels(img, analyzer, cfg: dict):
 
     # KW_{i} entity types map back to the i-th configured keyword (see build_analyzer).
     kw_finds = {f"KW_{i}": kw["find"] for i, kw in enumerate(normalize_keywords(cfg))}
+    keyword_only = not cfg.get("entities")
+    # Always detect the keyword (KW_*) types — custom keywords apply on images/PDFs too;
+    # in NER mode get_entities() adds the configured entities. Keyword-only mode → KW only
+    # (no NER). With NO keywords in keyword-only mode there's nothing to detect — return
+    # early rather than let an empty filter fall through to "detect everything".
+    if keyword_only and not kw_finds:
+        return img, 0, Counter()
+    ent_filter = kw_finds
     observations = ocr_image(img, cfg)
     draw = ImageDraw.Draw(img)
     count = 0
     blackout = Counter()
 
     for obs in observations:
-        # kw_replacements not needed here — visual redaction always uses black box
-        results = analyze(obs["text"], analyzer, cfg, kw_replacements={})
+        # visual redaction always uses a black box (no text replacement needed)
+        results = analyze(obs["text"], analyzer, cfg, ent_filter)
         if results:
             # Black out the entire observation region
             draw.rectangle(obs["bbox_pixels"], fill=(0, 0, 0))
@@ -526,6 +546,9 @@ def process_pdf(src: Path, dst: Path, analyzer, cfg: dict, dry_run: bool):
     from PIL import Image
 
     kw_finds = {f"KW_{i}": kw["find"] for i, kw in enumerate(normalize_keywords(cfg))}
+    keyword_only = not cfg.get("entities")
+    no_detect = keyword_only and not kw_finds   # keyword-only + no keywords → detect nothing
+    ent_filter = kw_finds   # KW types always; NER mode adds configured entities (get_entities)
     dpi = cfg["ocr"].get("dpi", 200)
     scale = dpi / 72.0
     total = 0
@@ -543,8 +566,8 @@ def process_pdf(src: Path, dst: Path, analyzer, cfg: dict, dry_run: bool):
             out_doc.insert_pdf(src_doc, from_page=page_num, to_page=page_num)
             out_page = out_doc[-1]
 
-            # kw_replacements not needed for PDFs — visual redaction only
-            results = analyze(page_text, analyzer, cfg, kw_replacements={})
+            # visual redaction only (no text replacement); keyword-only → no NER
+            results = [] if no_detect else analyze(page_text, analyzer, cfg, ent_filter)
             total += len(results)
 
             for r in results:
@@ -596,6 +619,18 @@ def process_pdf(src: Path, dst: Path, analyzer, cfg: dict, dry_run: bool):
 
 # ── Orchestration ─────────────────────────────────────────────────────────────
 
+def _copy_or_skip_unhandled(src: Path, dst: Path, cfg: dict, dry_run: bool, stats: dict) -> None:
+    """Leak guard: copy an unhandled/not-allowlisted file into redacted/ only if
+    copy_unhandled is set; otherwise leave it in the source and tally it."""
+    if cfg.get("copy_unhandled", False):
+        if not dry_run:
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src, dst)
+        stats["copy"] += 1
+    else:
+        stats["uncopied"] += 1
+
+
 def run(input_dir: Path, cfg: dict, dry_run: bool) -> None:
     output_dir = input_dir / cfg["output_dir"]
     if not dry_run:
@@ -628,6 +663,7 @@ def run(input_dir: Path, cfg: dict, dry_run: bool) -> None:
         analyzer, kw_replacements = None, {}
         log.info("Keyword-only, text-only input — skipping spaCy model load.")
 
+    include_set = set(_normalize_extensions(cfg.get("include_extensions", [])))
     blackout_counts = Counter()   # per-keyword image/PDF redaction counts
     binary_engaged = False        # did any image/PDF get processed this run?
     for src in files:
@@ -639,6 +675,10 @@ def run(input_dir: Path, cfg: dict, dry_run: bool) -> None:
             if ext in skip_exts:
                 log.debug(f"  SKIP {rel}")
                 stats["skip"] += 1
+                continue
+            if include_set and ext not in include_set:
+                # not in the allowlist → unhandled (leak guard / copy_unhandled)
+                _copy_or_skip_unhandled(src, dst, cfg, dry_run, stats)
                 continue
             if ext == ".md":
                 n = process_markdown(src, dst, analyzer, cfg, kw_replacements, dry_run, kr=kr)
@@ -681,16 +721,8 @@ def run(input_dir: Path, cfg: dict, dry_run: bool) -> None:
                 total_redactions += n
 
             else:
-                # Unhandled type. Leak guard (default): do NOT copy into redacted/
-                # — an unredacted file there looks safe but isn't. Opt in with
-                # copy_unhandled: true to mirror the input instead.
-                if cfg.get("copy_unhandled", False):
-                    if not dry_run:
-                        dst.parent.mkdir(parents=True, exist_ok=True)
-                        shutil.copy2(src, dst)
-                    stats["copy"] += 1
-                else:
-                    stats["uncopied"] += 1
+                # Allowlisted but no handler for this type → leak guard.
+                _copy_or_skip_unhandled(src, dst, cfg, dry_run, stats)
 
         except Exception as exc:
             log.error(f"  ERR  {rel}: {exc}")
@@ -839,9 +871,16 @@ def main() -> None:
         help="Discovery mode: NER-scan text files and LIST candidate identities "
              "(no redaction, no files written) to seed custom_keywords"
     )
+    parser.add_argument(
+        "--include", default=None,
+        help="Comma-separated extensions to process this run (e.g. '.md,.txt'), "
+             "overriding include_extensions in the config"
+    )
     args = parser.parse_args()
 
     cfg = load_config(args.config)
+    if args.include:
+        cfg["include_extensions"] = _normalize_extensions(args.include.split(","))
     input_dir = Path(args.input_dir).expanduser().resolve()
 
     if not input_dir.is_dir():

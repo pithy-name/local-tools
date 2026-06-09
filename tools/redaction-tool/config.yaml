@@ -73,17 +73,19 @@ skip_extensions:
   - .mov
   - .m4v
 
-# Handled formats (for reference): text — .md .txt .html .json .csv (find->replace /
-# pseudonyms); binary — .pdf .png .jpg .jpeg .gif .webp (OCR + black-box).
-# NOTE: this list is currently NOT enforced by the dispatch (a known limitation) —
-# redact.py routes by the file's extension directly, and unhandled types follow
-# `copy_unhandled` above. `skip_extensions` IS honored.
+# Allowlist: a file is processed only if its extension is in this list AND redact.py has a
+# handler for it; anything else follows `copy_unhandled` above. `skip_extensions` is checked
+# first (it wins). Override per run with `--include .md,.txt`.
+# An EMPTY list disables the allowlist (every handled type is processed).
+# Handled types: text — .md .html .htm .json .csv; binary — .pdf .png .jpg .jpeg .gif .webp.
+# (`.pdf` is also in skip_extensions above by default — remove it there to process PDFs.)
 include_extensions:
   - .md
   - .html
   - .htm
   - .json
   - .csv
+  - .pdf
   - .png
   - .jpg
   - .jpeg

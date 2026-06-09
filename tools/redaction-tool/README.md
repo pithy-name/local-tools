@@ -118,6 +118,7 @@ So a keyword-only text run touches **none** of the model/OCR stack — just the 
   IBAN_CODE, IP_ADDRESS, NRP`.
 - `custom_keywords` — exact strings to always redact; plain (`█████`) or `find:`/`replace:`
   for your own pseudonyms.
+- `include_extensions` — allowlist of types to process; override per run with `--include .md,.txt`.
 - `skip_extensions` — types ignored entirely (default: `.pdf .mp4 .mov .m4v`).
 - `copy_unhandled` — mirror unhandled types into `redacted/` (default `false`).
 

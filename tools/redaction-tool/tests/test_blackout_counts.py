@@ -34,11 +34,58 @@ class TestBlackoutCounts(unittest.TestCase):
             _img, count, blackout = redact.redact_image_pixels(img, analyzer, cfg)
         finally:
             redact.ocr_image = orig
-        # `count` also includes NER hits from the loaded model (the image path runs the
-        # full analyzer); the per-keyword `blackout` attributes ONLY the keyword (KW_*)
-        # matches — that's what the report column needs.
+        # keyword-only mode: the image path is restricted to keyword (KW_*) matches — no
+        # NER — so count == the keyword matches and blackout attributes each one.
+        self.assertEqual(count, 2)
         self.assertEqual(dict(blackout), {"Marcus Webb": 1, "Acme Corp": 1})
-        self.assertGreaterEqual(count, 2)
+
+    def test_keyword_only_image_path_skips_ner(self):
+        from PIL import Image
+        analyzer, cfg = self._analyzer([{"find": "Acme Corp", "replace": "[C]"}])  # keyword-only
+        img = Image.new("RGB", (60, 20), "white")
+        orig = redact.ocr_image
+        redact.ocr_image = lambda im, c: [
+            {"text": "Marcus Webb at Acme Corp", "bbox_pixels": (0, 0, 59, 19)},
+        ]
+        try:
+            _img, count, blackout = redact.redact_image_pixels(img, analyzer, cfg)
+        finally:
+            redact.ocr_image = orig
+        # "Marcus Webb" is an NER-only name (not a keyword) → must NOT be redacted here.
+        self.assertEqual(count, 1)
+        self.assertEqual(dict(blackout), {"Acme Corp": 1})
+
+    def test_keyword_only_no_keywords_does_not_run_ner(self):
+        from PIL import Image
+        analyzer, cfg = self._analyzer([])  # keyword-only, NO keywords
+        img = Image.new("RGB", (60, 20), "white")
+        orig = redact.ocr_image
+        redact.ocr_image = lambda im, c: [{"text": "Marcus Webb here", "bbox_pixels": (0, 0, 59, 19)}]
+        try:
+            _img, count, blackout = redact.redact_image_pixels(img, analyzer, cfg)
+        finally:
+            redact.ocr_image = orig
+        self.assertEqual(count, 0)          # no keywords → nothing detected (no NER leak)
+        self.assertEqual(dict(blackout), {})
+
+    def test_ner_mode_also_applies_custom_keywords_on_images(self):
+        from PIL import Image
+        cfg = dict(redact.DEFAULT_CONFIG)
+        cfg["entities"] = ["PERSON"]
+        cfg["custom_keywords"] = [{"find": "Acme Corp", "replace": "[C]"}]
+        analyzer, _ = redact.build_analyzer(cfg)
+        img = Image.new("RGB", (90, 20), "white")
+        orig = redact.ocr_image
+        redact.ocr_image = lambda im, c: [
+            {"text": "Marcus Webb at Acme Corp", "bbox_pixels": (0, 0, 89, 19)},
+        ]
+        try:
+            _img, count, blackout = redact.redact_image_pixels(img, analyzer, cfg)
+        finally:
+            redact.ocr_image = orig
+        # NER mode must ALSO apply custom keywords to images: "Acme Corp" is blacked out.
+        self.assertEqual(dict(blackout), {"Acme Corp": 1})
+        self.assertGreaterEqual(count, 2)   # PERSON (Marcus Webb) + keyword (Acme Corp)
 
     def test_run_report_shows_real_blackout_counts(self):
         import tempfile
