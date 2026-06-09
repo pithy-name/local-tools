@@ -56,7 +56,7 @@ class TestKeywordOnlyRun(unittest.TestCase):
         cfg["entities"] = []
         cfg["custom_keywords"] = [{"find": "x", "replace": "[X]"}]
         with mock.patch.object(redact, "build_analyzer", return_value=(None, {})) as ba, \
-                mock.patch.object(redact, "process_image", return_value=0):
+                mock.patch.object(redact, "process_image", return_value=(0, {})):
             redact.run(tmp, cfg, dry_run=True)
         ba.assert_called_once()
 

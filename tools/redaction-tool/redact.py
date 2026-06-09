@@ -21,6 +21,7 @@ import re
 import shutil
 import sys
 import tempfile
+from collections import Counter
 from pathlib import Path
 from typing import Optional
 
@@ -467,15 +468,19 @@ def ocr_image(img, cfg: dict) -> list[Observation]:
 def redact_image_pixels(img, analyzer, cfg: dict):
     """
     OCR the image, run Presidio on each text observation, black out sensitive regions.
-    Returns (modified PIL.Image, num_redactions).
+    Returns (modified PIL.Image, num_redactions, blackout_counts) — blackout_counts is a
+    Counter keyed by the matched keyword's `find` (for the per-keyword report).
     Conservative: if any PII found in a line's observation, the whole bounding box
     is blacked out — no partial-line sub-pixel surgery needed.
     """
     from PIL import ImageDraw
 
+    # KW_{i} entity types map back to the i-th configured keyword (see build_analyzer).
+    kw_finds = {f"KW_{i}": kw["find"] for i, kw in enumerate(normalize_keywords(cfg))}
     observations = ocr_image(img, cfg)
     draw = ImageDraw.Draw(img)
     count = 0
+    blackout = Counter()
 
     for obs in observations:
         # kw_replacements not needed here — visual redaction always uses black box
@@ -484,15 +489,20 @@ def redact_image_pixels(img, analyzer, cfg: dict):
             # Black out the entire observation region
             draw.rectangle(obs["bbox_pixels"], fill=(0, 0, 0))
             count += len(results)
+            for r in results:
+                find = kw_finds.get(r.entity_type)
+                if find is not None:
+                    blackout[find] += 1
 
-    return img, count
+    return img, count, blackout
 
 
-def process_image(src: Path, dst: Path, analyzer, cfg: dict, dry_run: bool) -> int:
+def process_image(src: Path, dst: Path, analyzer, cfg: dict, dry_run: bool):
+    """Returns (num_redactions, blackout_counts)."""
     from PIL import Image
 
     img = Image.open(str(src)).convert("RGB")
-    img, count = redact_image_pixels(img, analyzer, cfg)
+    img, count, blackout = redact_image_pixels(img, analyzer, cfg)
 
     if not dry_run:
         dst.parent.mkdir(parents=True, exist_ok=True)
@@ -501,23 +511,25 @@ def process_image(src: Path, dst: Path, analyzer, cfg: dict, dry_run: bool) -> i
         else:
             shutil.copy2(src, dst)  # no changes needed — copy original
 
-    return count
+    return count, blackout
 
 
 # ── PDF redaction ─────────────────────────────────────────────────────────────
 
-def process_pdf(src: Path, dst: Path, analyzer, cfg: dict, dry_run: bool) -> int:
+def process_pdf(src: Path, dst: Path, analyzer, cfg: dict, dry_run: bool):
     """
     Digital pages  → PyMuPDF native redaction annotations (preserves PDF structure).
     Scanned pages  → Render to image → Apple Vision OCR → black boxes → reinsert.
-    Output is a new PDF saved to dst.
+    Output is a new PDF saved to dst. Returns (num_redactions, blackout_counts).
     """
     import fitz
     from PIL import Image
 
+    kw_finds = {f"KW_{i}": kw["find"] for i, kw in enumerate(normalize_keywords(cfg))}
     dpi = cfg["ocr"].get("dpi", 200)
     scale = dpi / 72.0
     total = 0
+    blackout = Counter()
 
     src_doc = fitz.open(str(src))
     out_doc = fitz.open()
@@ -536,6 +548,9 @@ def process_pdf(src: Path, dst: Path, analyzer, cfg: dict, dry_run: bool) -> int
             total += len(results)
 
             for r in results:
+                find = kw_finds.get(r.entity_type)
+                if find is not None:
+                    blackout[find] += 1
                 # Get the exact phrase from the extracted text
                 phrase = page_text[r.start:r.end].strip()
                 if not phrase:
@@ -553,8 +568,9 @@ def process_pdf(src: Path, dst: Path, analyzer, cfg: dict, dry_run: bool) -> int
             pix = page.get_pixmap(matrix=mat)
             img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
 
-            img, count = redact_image_pixels(img, analyzer, cfg)
+            img, count, page_blackout = redact_image_pixels(img, analyzer, cfg)
             total += count
+            blackout.update(page_blackout)
 
             # New page at original PDF dimensions (points), filled with redacted image
             new_page = out_doc.new_page(
@@ -575,7 +591,7 @@ def process_pdf(src: Path, dst: Path, analyzer, cfg: dict, dry_run: bool) -> int
 
     src_doc.close()
     out_doc.close()
-    return total
+    return total, blackout
 
 
 # ── Orchestration ─────────────────────────────────────────────────────────────
@@ -612,6 +628,8 @@ def run(input_dir: Path, cfg: dict, dry_run: bool) -> None:
         analyzer, kw_replacements = None, {}
         log.info("Keyword-only, text-only input — skipping spaCy model load.")
 
+    blackout_counts = Counter()   # per-keyword image/PDF redaction counts
+    binary_engaged = False        # did any image/PDF get processed this run?
     for src in files:
         rel = src.relative_to(input_dir)
         dst = output_dir / rel
@@ -647,13 +665,17 @@ def run(input_dir: Path, cfg: dict, dry_run: bool) -> None:
                 total_redactions += n
 
             elif ext == ".pdf":
-                n = process_pdf(src, dst, analyzer, cfg, dry_run)
+                n, bc = process_pdf(src, dst, analyzer, cfg, dry_run)
+                blackout_counts.update(bc)
+                binary_engaged = True
                 log.info(f"  PDF  {rel}  → {n} redaction(s)")
                 stats["pdf"] += 1
                 total_redactions += n
 
             elif ext in (".png", ".jpg", ".jpeg", ".gif", ".webp"):
-                n = process_image(src, dst, analyzer, cfg, dry_run)
+                n, bc = process_image(src, dst, analyzer, cfg, dry_run)
+                blackout_counts.update(bc)
+                binary_engaged = True
                 log.info(f"  IMG  {rel}  → {n} redaction(s)")
                 stats["img"] += 1
                 total_redactions += n
@@ -697,12 +719,13 @@ def run(input_dir: Path, cfg: dict, dry_run: bool) -> None:
                  f"copy_unhandled: true in config to mirror them instead.")
 
     # Keyword-only mode: per-pseudonym count report. text-sub = keyword_redactor's real
-    # per-keyword tallies. blackout is passed None, so it renders "N/A" (image/PDF redaction
-    # not engaged). The image/PDF path doesn't yet count per keyword, so blackout never shows
-    # real numbers — see the backlog (four-state design: N/A / 0 / count / Unimplemented).
+    # per-keyword text tallies; blackout = real per-keyword counts from the image/PDF path.
+    # blackout_counts is None when no image/PDF ran → the column renders "N/A" (mechanism not
+    # engaged); a dict (with 0 for unmatched keywords) once any image/PDF was processed.
     if kr is not None and kr.mappings:
         from report_format import build_count_report, render_count_report
-        report = build_count_report(kr.mappings, kr.counts)
+        report = build_count_report(kr.mappings, kr.counts,
+                                    blackout_counts if binary_engaged else None)
         log.info("\n  Per-pseudonym counts (text-sub | blackout):\n"
                  + render_count_report(report))
 
@@ -743,12 +766,20 @@ def _texts_for_scan(src: Path, ext: str, cfg: dict):
             yield obs["text"]
     elif ext == ".pdf":
         import fitz
+        from PIL import Image
+        scale = cfg.get("ocr", {}).get("dpi", 200) / 72.0
         doc = fitz.open(str(src))
         try:
             for page in doc:
-                text = page.get_text().strip()  # digital pages; scanned-page OCR TODO
+                text = page.get_text().strip()
                 if text:
-                    yield text
+                    yield text                       # digital page
+                else:
+                    # scanned page: render → OCR (mirrors the redact path)
+                    pix = page.get_pixmap(matrix=fitz.Matrix(scale, scale))
+                    img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
+                    for obs in ocr_image(img, cfg):
+                        yield obs["text"]
         finally:
             doc.close()
 
@@ -782,8 +813,7 @@ def scan(input_dir: Path, cfg: dict) -> None:
 
     found = collect_entities(
         texts, lambda t: analyzer.analyze(text=t, entities=entities, language="en"))
-    log.info(f"\n[SCAN] {scanned} file(s) scanned, {skipped} unsupported skipped "
-             f"(scanned-PDF-page OCR is still TODO).\n"
+    log.info(f"\n[SCAN] {scanned} file(s) scanned, {skipped} unsupported skipped.\n"
              + render_scan_report(found))
 
 

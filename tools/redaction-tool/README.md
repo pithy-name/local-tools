@@ -8,15 +8,13 @@
 > misplace the black boxes.** Always review the output — especially redacted images and
 > PDFs — before trusting it on sensitive data.
 >
-> **Known reporting limitation:** the per-keyword report's `blackout` column (image/PDF
-> counts) isn't implemented yet — it reads as one of:
+> **Reading the report:** the per-keyword `blackout` column (image/PDF redaction counts) is one of:
 
 | `blackout` shows | meaning |
 |---|---|
 | `N/A` | no images/PDFs were processed — not applicable to this run |
-| `0` | images/PDFs were processed, but nothing matched this keyword |
-| `N` (a count) | redacted N times in images/PDFs — *the eventual goal* |
-| `Unimplemented` | images/PDFs **were** redacted, but per-keyword counting isn't built yet |
+| `0` | images/PDFs were processed, but this keyword wasn't matched in them |
+| `N` (a count) | the keyword was blacked out N times in images/PDFs |
 
 A fully local, air-gapped PII redaction tool. Point it at a folder of files; it writes a
 redacted copy with names, emails, phone numbers, and other sensitive data removed. No
