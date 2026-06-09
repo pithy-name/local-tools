@@ -140,6 +140,9 @@ So a keyword-only text run touches **none** of the model/OCR stack — just the 
   Output at        : /path/to/folder/redacted
 
   Note: 3 unhandled file(s) were NOT copied into redacted/ (leak guard)...
+    not copied: archive.zip
+    not copied: scans/old.tiff
+    not copied: notes.xlsx
 
   Per-pseudonym counts (text-sub | blackout):
     [CLIENT-A]  (Acme Corp)  text-sub: 12  blackout: N/A

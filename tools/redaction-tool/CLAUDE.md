@@ -31,12 +31,13 @@ python -m spacy download en_core_web_lg
 python redact.py <dir> --dry-run                 # preview (no files written)
 python redact.py <dir>                            # redact → <dir>/redacted/
 python redact.py <dir> --scan                     # discover identities (no writes)
+python redact.py <dir> --include .md,.txt         # process only these types this run
 ```
 
 ## Tests
 
 ```bash
-.venv/bin/python -m unittest discover -s tests    # 43 tests (under the venv)
+.venv/bin/python -m unittest discover -s tests    # 54 tests (under the venv)
 ```
 Stdlib-only modules (`keyword_redactor`, `report_format`, scan/leak-guard logic)
 also run under system `python3`.
