@@ -71,6 +71,8 @@ def load_config(path: Optional[str]) -> dict:
         with open(path) as f:
             overrides = yaml.safe_load(f) or {}
         for k, v in overrides.items():
+            if v is None:
+                continue  # present-but-empty YAML key (e.g. all examples commented out) → keep default
             if isinstance(v, dict) and isinstance(cfg.get(k), dict):
                 cfg[k] = {**cfg[k], **v}
             else:
@@ -126,7 +128,7 @@ def normalize_keywords(cfg: dict) -> list[dict]:
       - Find/replace mapping:     {find: "John Smith", replace: "J.S."}
     """
     normalized = []
-    for item in cfg.get("custom_keywords", []):
+    for item in (cfg.get("custom_keywords") or []):
         if isinstance(item, str):
             normalized.append({"find": item, "replace": None})   # None → use default
         elif isinstance(item, dict) and "find" in item:
