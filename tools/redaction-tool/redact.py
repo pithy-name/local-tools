@@ -179,6 +179,14 @@ def build_analyzer(cfg: dict) -> tuple:
         sys.exit(1)
 
     analyzer = AnalyzerEngine(nlp_engine=nlp_engine, supported_languages=["en"])
+    # Suppress Presidio's per-token "not mapped" noise — these are spaCy entity types
+    # (CARDINAL, MONEY, etc.) that Presidio has no recognizer for; harmless to ignore.
+    import logging as _logging
+    _logging.getLogger("presidio_analyzer").addFilter(
+        type("_NoMappingFilter", (_logging.Filter,), {
+            "filter": staticmethod(lambda r: "is not mapped to a Presidio entity" not in r.getMessage())
+        })()
+    )
 
     keywords = normalize_keywords(cfg)
     kw_replacements: dict[str, Optional[str]] = {}
@@ -254,26 +262,33 @@ def anonymize(
 
 # ── Text file handlers ────────────────────────────────────────────────────────
 
-def _redact_text(text, analyzer, cfg: dict, kw_replacements: dict, kr) -> tuple:
+def _redact_text(text, analyzer, cfg: dict, kw_replacements: dict, kr, collector=None) -> tuple:
     """Redact one string → (redacted, n_swaps).
 
     kr (a keyword_redactor.KeywordRedactor, keyword-only mode) wins when set —
     no spaCy. Otherwise the NER+keyword analyzer path. n_swaps is per-call.
+    collector, when set, accumulates {entity_type: {text: count}} for dry-run reporting.
     """
     if kr is not None:
         before = sum(kr.counts.values())
         out = kr.redact(text)
         return out, sum(kr.counts.values()) - before
     results = analyze(text, analyzer, cfg, kw_replacements)
+    if collector is not None:
+        for r in results:
+            entity_text = text[r.start:r.end]
+            bucket = collector.setdefault(r.entity_type, {})
+            bucket[entity_text] = bucket.get(entity_text, 0) + 1
     kept = _deoverlap(results)
     return anonymize(text, kept, cfg["replacement"], kw_replacements), len(kept)
 
 
 def process_markdown(
-    src: Path, dst: Path, analyzer, cfg: dict, kw_replacements: dict, dry_run: bool, kr=None
+    src: Path, dst: Path, analyzer, cfg: dict, kw_replacements: dict, dry_run: bool,
+    kr=None, collector=None
 ) -> int:
     text = src.read_text(encoding="utf-8", errors="replace")
-    redacted, n = _redact_text(text, analyzer, cfg, kw_replacements, kr)
+    redacted, n = _redact_text(text, analyzer, cfg, kw_replacements, kr, collector)
     if not dry_run:
         dst.parent.mkdir(parents=True, exist_ok=True)
         dst.write_text(redacted, encoding="utf-8")
@@ -281,7 +296,8 @@ def process_markdown(
 
 
 def process_html(
-    src: Path, dst: Path, analyzer, cfg: dict, kw_replacements: dict, dry_run: bool, kr=None
+    src: Path, dst: Path, analyzer, cfg: dict, kw_replacements: dict, dry_run: bool,
+    kr=None, collector=None
 ) -> int:
     from bs4 import BeautifulSoup
 
@@ -295,7 +311,7 @@ def process_html(
         if node.parent and node.parent.name in SKIP_TAGS:
             continue
         text = str(node)
-        redacted, n = _redact_text(text, analyzer, cfg, kw_replacements, kr)
+        redacted, n = _redact_text(text, analyzer, cfg, kw_replacements, kr, collector)
         total += n
         if n and not dry_run:
             node.replace_with(redacted)
@@ -303,7 +319,7 @@ def process_html(
     # Also scrub mailto: href attributes (emails in links)
     for tag in soup.find_all("a", href=re.compile(r"^mailto:", re.I)):
         href = tag.get("href", "")
-        redacted, n = _redact_text(href, analyzer, cfg, kw_replacements, kr)
+        redacted, n = _redact_text(href, analyzer, cfg, kw_replacements, kr, collector)
         total += n
         if n and not dry_run:
             tag["href"] = redacted
@@ -338,13 +354,14 @@ def _walk_json(obj, redact_one):
 
 
 def process_json(
-    src: Path, dst: Path, analyzer, cfg: dict, kw_replacements: dict, dry_run: bool, kr=None
+    src: Path, dst: Path, analyzer, cfg: dict, kw_replacements: dict, dry_run: bool,
+    kr=None, collector=None
 ) -> int:
     """Parse-aware JSON redaction: redact string VALUES only, re-serialize valid
     JSON. Keys, numbers, bools, nulls pass through; originals never modified."""
     data = json.loads(src.read_text(encoding="utf-8-sig", errors="replace"))
     redacted, total = _walk_json(
-        data, lambda s: _redact_text(s, analyzer, cfg, kw_replacements, kr))
+        data, lambda s: _redact_text(s, analyzer, cfg, kw_replacements, kr, collector))
     if not dry_run:
         dst.parent.mkdir(parents=True, exist_ok=True)
         dst.write_text(json.dumps(redacted, ensure_ascii=False, indent=2) + "\n",
@@ -353,7 +370,8 @@ def process_json(
 
 
 def process_csv(
-    src: Path, dst: Path, analyzer, cfg: dict, kw_replacements: dict, dry_run: bool, kr=None
+    src: Path, dst: Path, analyzer, cfg: dict, kw_replacements: dict, dry_run: bool,
+    kr=None, collector=None
 ) -> int:
     """Redact every cell of a CSV, preserving structure (csv.reader/writer)."""
     rows_out, total = [], 0
@@ -361,7 +379,7 @@ def process_csv(
         for row in csv.reader(f):
             new_row = []
             for cell in row:
-                red, n = _redact_text(cell, analyzer, cfg, kw_replacements, kr)
+                red, n = _redact_text(cell, analyzer, cfg, kw_replacements, kr, collector)
                 new_row.append(red)
                 total += n
             rows_out.append(new_row)
@@ -693,6 +711,8 @@ def run(input_dir: Path, cfg: dict, dry_run: bool) -> int:
     # keyword run loads no model at all; a text-only config never loads one either.
     BINARY_EXTS = {".pdf", ".png", ".jpg", ".jpeg", ".gif", ".webp"}
     keyword_only = not cfg.get("entities")
+    # Collect detected entity texts during dry-run (NER mode only) for user review.
+    collector = {} if (dry_run and not keyword_only) else None
     include_set = set(_normalize_extensions(cfg.get("include_extensions", [])))
     # Only count a binary as "will be processed" if it passes the include_extensions allowlist.
     has_binary = any(
@@ -739,31 +759,31 @@ def run(input_dir: Path, cfg: dict, dry_run: bool) -> int:
                     uncopied_paths.append(str(rel))
                 continue
             if ext == ".md":
-                n = process_markdown(src, dst, analyzer, cfg, kw_replacements, dry_run, kr=kr)
+                n = process_markdown(src, dst, analyzer, cfg, kw_replacements, dry_run, kr=kr, collector=collector)
                 log.info(f"  MD   {rel}  → {n} redaction(s)")
                 stats["md"] += 1
                 total_redactions += n
 
             elif ext == ".txt":
-                n = process_markdown(src, dst, analyzer, cfg, kw_replacements, dry_run, kr=kr)
+                n = process_markdown(src, dst, analyzer, cfg, kw_replacements, dry_run, kr=kr, collector=collector)
                 log.info(f"  TXT  {rel}  → {n} redaction(s)")
                 stats["txt"] += 1
                 total_redactions += n
 
             elif ext in (".html", ".htm"):
-                n = process_html(src, dst, analyzer, cfg, kw_replacements, dry_run, kr=kr)
+                n = process_html(src, dst, analyzer, cfg, kw_replacements, dry_run, kr=kr, collector=collector)
                 log.info(f"  HTML {rel}  → {n} redaction(s)")
                 stats["html"] += 1
                 total_redactions += n
 
             elif ext == ".json":
-                n = process_json(src, dst, analyzer, cfg, kw_replacements, dry_run, kr=kr)
+                n = process_json(src, dst, analyzer, cfg, kw_replacements, dry_run, kr=kr, collector=collector)
                 log.info(f"  JSON {rel}  → {n} redaction(s)")
                 stats["json"] += 1
                 total_redactions += n
 
             elif ext == ".csv":
-                n = process_csv(src, dst, analyzer, cfg, kw_replacements, dry_run, kr=kr)
+                n = process_csv(src, dst, analyzer, cfg, kw_replacements, dry_run, kr=kr, collector=collector)
                 log.info(f"  CSV  {rel}  → {n} redaction(s)")
                 stats["csv"] += 1
                 total_redactions += n
@@ -835,6 +855,19 @@ def run(input_dir: Path, cfg: dict, dry_run: bool) -> int:
                                     blackout_counts if binary_engaged else None)
         log.info("\n  Per-pseudonym counts (text-sub | blackout):\n"
                  + render_count_report(report))
+
+    if dry_run and collector:
+        # KW_i entity types are user-configured custom keywords — skip them here.
+        # This list surfaces NER discoveries the user doesn't know about yet.
+        ner_only = {k: v for k, v in collector.items() if not k.startswith("KW_")}
+        if ner_only:
+            lines = ["\n[DRY RUN] Entities detected (would be redacted):"]
+            for etype in sorted(ner_only):
+                lines.append(f"  {etype}:")
+                for txt, cnt in sorted(ner_only[etype].items(), key=lambda x: -x[1]):
+                    suffix = f"  ×{cnt}" if cnt > 1 else ""
+                    lines.append(f"    {txt}{suffix}")
+            log.info("\n".join(lines))
 
     return stats["errors"]
 
