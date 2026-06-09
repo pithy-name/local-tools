@@ -8,6 +8,14 @@
 > misplace the black boxes.** Always review the output — especially redacted images and
 > PDFs — before trusting it on sensitive data.
 >
+> **Presidio warning suppression:** the tool silences Presidio's per-entity `"Entity X is not
+> mapped to a Presidio entity"` log lines (for spaCy types like `CARDINAL`, `MONEY`, `PRODUCT`
+> that Presidio has no recognizer for). These are noise — the entities are filtered from output
+> regardless — but the suppression uses a log-message filter, not Presidio's native
+> `labels_to_ignore`. If you add a custom Presidio recognizer for one of those spaCy entity types
+> and see unexpected behavior, disable the filter by commenting out the `_NoMappingFilter` block
+> in `build_analyzer()`.
+>
 > **Reading the report:** the per-keyword `blackout` column (image/PDF redaction counts) is one of:
 
 | `blackout` shows | meaning |
@@ -43,6 +51,22 @@ python -m spacy download en_core_web_lg    # download the NER model (~750 MB)
 ```
 Non-macOS OCR: `brew install tesseract`, then uncomment `pytesseract` in `requirements.txt`.
 </details>
+
+## Removing the model
+
+To reclaim the ~750 MB used by `en_core_web_lg`:
+
+```bash
+source .venv/bin/activate
+pip uninstall en_core_web_lg
+```
+
+To wipe the entire virtual environment and start fresh:
+
+```bash
+rm -rf .venv
+bash setup.sh    # re-run setup when you want it back
+```
 
 ## Redact a folder
 

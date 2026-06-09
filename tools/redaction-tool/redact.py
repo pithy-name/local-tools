@@ -181,12 +181,15 @@ def build_analyzer(cfg: dict) -> tuple:
     analyzer = AnalyzerEngine(nlp_engine=nlp_engine, supported_languages=["en"])
     # Suppress Presidio's per-token "not mapped" noise — these are spaCy entity types
     # (CARDINAL, MONEY, etc.) that Presidio has no recognizer for; harmless to ignore.
+    # Presidio uses "presidio-analyzer" (hyphen) as its logger name.
     import logging as _logging
-    _logging.getLogger("presidio_analyzer").addFilter(
-        type("_NoMappingFilter", (_logging.Filter,), {
-            "filter": staticmethod(lambda r: "is not mapped to a Presidio entity" not in r.getMessage())
-        })()
-    )
+
+    class _NoMappingFilter(_logging.Filter):
+        def filter(self, record):
+            return "is not mapped to a Presidio entity" not in record.getMessage()
+
+    for _name in ("presidio-analyzer", "presidio_analyzer"):
+        _logging.getLogger(_name).addFilter(_NoMappingFilter())
 
     keywords = normalize_keywords(cfg)
     kw_replacements: dict[str, Optional[str]] = {}
@@ -864,7 +867,7 @@ def run(input_dir: Path, cfg: dict, dry_run: bool) -> int:
             lines = ["\n[DRY RUN] Entities detected (would be redacted):"]
             for etype in sorted(ner_only):
                 lines.append(f"  {etype}:")
-                for txt, cnt in sorted(ner_only[etype].items(), key=lambda x: -x[1]):
+                for txt, cnt in sorted(ner_only[etype].items(), key=lambda x: x[0].lower()):
                     suffix = f"  ×{cnt}" if cnt > 1 else ""
                     lines.append(f"    {txt}{suffix}")
             log.info("\n".join(lines))
