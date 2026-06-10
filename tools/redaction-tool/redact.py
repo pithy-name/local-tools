@@ -189,6 +189,26 @@ def _silence_benign_presidio_warnings() -> None:
             lg.addFilter(_BenignPresidioFilter())
 
 
+# Blanket http(s) URL pattern (case-insensitive scheme; \S+ grabs the whole URL
+# token up to whitespace — trailing punctuation is intentionally included).
+URL_REGEX = r"(?i)https?://\S+"
+
+
+def _register_url_recognizer(analyzer, cfg: dict, kw_replacements: dict) -> bool:
+    """Opt-in blanket URL redaction. When 'URL' is listed in `entities`, register a
+    recognizer for the URL pattern and map the URL entity to the literal '[URL]'
+    replacement (via kw_replacements, which anonymize() honors). Returns True if
+    registered. URLs are untouched unless 'URL' is enabled."""
+    if "URL" not in cfg.get("entities", DEFAULT_CONFIG["entities"]):
+        return False
+    from presidio_analyzer import PatternRecognizer, Pattern
+    pattern = Pattern(name="url", regex=URL_REGEX, score=0.9)
+    analyzer.registry.add_recognizer(
+        PatternRecognizer(supported_entity="URL", patterns=[pattern]))
+    kw_replacements["URL"] = "[URL]"
+    return True
+
+
 def build_analyzer(cfg: dict) -> tuple:
     """
     Return (AnalyzerEngine, kw_replacements).
@@ -237,6 +257,9 @@ def build_analyzer(cfg: dict) -> tuple:
             f"Loaded {len(keywords)} custom keyword(s) "
             f"({n_mapped} with custom replacement, {len(keywords) - n_mapped} using default)"
         )
+
+    if _register_url_recognizer(analyzer, cfg, kw_replacements):
+        log.info("URL redaction enabled — http(s) URLs will be replaced with [URL].")
 
     return analyzer, kw_replacements
 
