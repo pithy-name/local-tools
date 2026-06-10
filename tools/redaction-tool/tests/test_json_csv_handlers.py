@@ -45,6 +45,98 @@ class TestProcessJson(unittest.TestCase):
         self.assertEqual(n, 2)
 
 
+class TestNestedJsonDecoding(unittest.TestCase):
+    """Double-encoded JSON: a string VALUE that is itself serialized JSON (e.g. a
+    rich-text delta blob). With decode_nested_json on (default), the walker decodes
+    it, redacts the inner string values individually, and re-encodes — so each text
+    run is analyzed as clean text instead of the analyzer seeing raw markup, and the
+    file round-trips. Generic: no field names are hardcoded.
+
+    These are white-box tests of _walk_json with a stub redactor (uppercases each
+    string, counts 1) so they assert the *decode mechanism* without the model or the
+    keyword engine — in keyword mode an opaque substring match would mask whether
+    decoding actually happened."""
+
+    @staticmethod
+    def _stub():
+        calls = []
+
+        def redact_one(s):
+            calls.append(s)
+            return s.upper(), 1
+
+        return redact_one, calls
+
+    def test_walk_json_decodes_nested_blob_into_individual_values(self):
+        redact_one, calls = self._stub()
+        blob = json.dumps([{"text": "hi", "attributes": {"line": {"listStyle": "x"}}}])
+        obj = {"richText": blob, "id": 7}
+        out, n = redact._walk_json(obj, redact_one, decode_nested=True)
+        # Inner string values were each visited as their own value (decoded)…
+        self.assertIn("hi", calls)
+        self.assertIn("x", calls)
+        # …and the serialized blob was NEVER handed to the redactor whole.
+        self.assertNotIn(blob, calls)
+        # richText comes back as re-encoded JSON with the redacted inner values.
+        decoded = json.loads(out["richText"])
+        self.assertEqual(decoded[0]["text"], "HI")
+        self.assertEqual(decoded[0]["attributes"]["line"]["listStyle"], "X")
+        self.assertEqual(out["id"], 7)            # non-strings pass through
+        self.assertEqual(n, 2)                    # two inner strings redacted
+
+    def test_walk_json_leaves_blob_opaque_when_disabled(self):
+        redact_one, calls = self._stub()
+        blob = json.dumps([{"text": "hi"}])
+        out, n = redact._walk_json({"richText": blob}, redact_one, decode_nested=False)
+        # Off → the whole serialized blob is passed as a single value (old behavior).
+        self.assertIn(blob, calls)
+        self.assertEqual(out["richText"], blob.upper())
+        self.assertEqual(n, 1)
+
+    def test_walk_json_recurses_through_double_nesting(self):
+        redact_one, calls = self._stub()
+        # A blob whose own string value is itself another serialized JSON blob.
+        inner = json.dumps([{"text": "deep"}])
+        outer_blob = json.dumps({"ops": inner})
+        out, _ = redact._walk_json({"rt": outer_blob}, redact_one, decode_nested=True)
+        self.assertIn("deep", calls)              # reached the doubly-nested value
+        self.assertEqual(json.loads(json.loads(out["rt"])["ops"])[0]["text"], "DEEP")
+
+    def test_plain_prose_not_mistaken_for_json(self):
+        # A normal string that doesn't start with { or [ is never decode-probed.
+        redact_one, calls = self._stub()
+        out, n = redact._walk_json({"body": "hello Mary"}, redact_one, decode_nested=True)
+        self.assertEqual(calls, ["hello Mary"])   # passed straight through, once
+        self.assertEqual(out["body"], "HELLO MARY")
+
+    def test_process_json_end_to_end_redacts_inside_blob(self):
+        # Integration through process_json (keyword mode): name inside the blob is
+        # redacted and the file round-trips as valid nested JSON.
+        tmp = Path(tempfile.mkdtemp())
+        src = tmp / "n.json"
+        inner = json.dumps([{"text": "Mary Bello",
+                             "attributes": {"line": {"listStyle": "bulleted"}}}])
+        src.write_text(json.dumps({
+            "entries": [{"richText": inner, "id": 1}],
+            "metadata": {"owner": "Mary Bello"},
+        }), encoding="utf-8")
+        cfg = _kw_cfg([{"find": "Mary Bello", "replace": "[PERSON_A]"}])
+        kr = redact.make_keyword_redactor_from_config(cfg)
+        dst = tmp / "out.json"
+        n = redact.process_json(src, dst, None, cfg, {}, dry_run=False, kr=kr)
+        out = json.loads(dst.read_text(encoding="utf-8"))
+        self.assertEqual(out["entries"][0]["id"], 1)
+        self.assertEqual(out["metadata"]["owner"], "[PERSON_A]")
+        decoded = json.loads(out["entries"][0]["richText"])   # still JSON-encoded
+        self.assertEqual(decoded[0]["text"], "[PERSON_A]")
+        self.assertEqual(decoded[0]["attributes"]["line"]["listStyle"], "bulleted")
+        self.assertEqual(n, 2)
+
+    def test_default_config_enables_decoding(self):
+        # The toggle ships on so the common case "just works".
+        self.assertTrue(redact.DEFAULT_CONFIG.get("decode_nested_json"))
+
+
 class TestProcessCsv(unittest.TestCase):
     def test_redacts_every_cell_keeps_valid_csv(self):
         import csv

@@ -110,5 +110,57 @@ class TestDryRunKwFilter(unittest.TestCase):
                          "custom keyword text must not appear — user already knows it")
 
 
+class TestFlatEntityList(unittest.TestCase):
+    """The dry-run entity list is ONE alphabetical list across all entity types,
+    with the type shown inline on the same line (not grouped under TYPE: headers),
+    and each entity collapsed to a single line."""
+
+    def _run_with_spans(self, text, spans, cfg=None):
+        tmpdir = Path(tempfile.mkdtemp())
+        (tmpdir / "note.md").write_text(text, encoding="utf-8")
+        cfg = cfg or _ner_cfg()
+        with patch("redact.analyze", return_value=spans):
+            with self.assertLogs("redact", level="INFO") as cm:
+                redact.run(tmpdir, cfg, dry_run=True)
+        return "\n".join(cm.output)
+
+    def test_type_shown_inline_not_grouped(self):
+        out = self._run_with_spans(
+            "John Smith met Acme",
+            [_span(0, 10, "PERSON"), _span(15, 19, "ORGANIZATION")])
+        person_line = next(l for l in out.splitlines() if "John Smith" in l)
+        self.assertIn("(PERSON)", person_line)        # type inline, same line
+        acme_line = next(l for l in out.splitlines() if "Acme" in l)
+        self.assertIn("(ORGANIZATION)", acme_line)
+        # Old grouped "TYPE:" headers are gone.
+        self.assertNotIn("PERSON:", out)
+        self.assertNotIn("ORGANIZATION:", out)
+
+    def test_single_alphabetical_order_across_types(self):
+        # Names chosen to not substring-collide with summary lines (e.g. "Markdown").
+        out = self._run_with_spans(
+            "Zara Acme Quinn",
+            [_span(0, 4, "PERSON"), _span(5, 9, "ORGANIZATION"), _span(10, 15, "PERSON")])
+        # Scope to entity rows only — they carry an inline "(TYPE)" marker.
+        rows = [l for l in out.splitlines() if "(" in l and ")" in l]
+        i_acme = next(i for i, l in enumerate(rows) if "Acme" in l)
+        i_quinn = next(i for i, l in enumerate(rows) if "Quinn" in l)
+        i_zara = next(i for i, l in enumerate(rows) if "Zara" in l)
+        self.assertLess(i_acme, i_quinn)              # one A-Z run, not per-type
+        self.assertLess(i_quinn, i_zara)
+
+    def test_newline_in_span_collapsed_to_one_line(self):
+        out = self._run_with_spans("Foo\nBar baz", [_span(0, 7, "PERSON")])  # "Foo\nBar"
+        line = next(l for l in out.splitlines() if "(PERSON)" in l)
+        self.assertIn("Foo Bar", line)                # collapsed onto the type's line
+        self.assertNotIn("\nBar\n", "\n" + out + "\n")  # no bare carryover line
+
+    def test_repeat_count_suffix(self):
+        out = self._run_with_spans(
+            "Sam and Sam", [_span(0, 3, "PERSON"), _span(8, 11, "PERSON")])
+        line = next(l for l in out.splitlines() if "Sam" in l and "(PERSON)" in l)
+        self.assertIn("×2", line)
+
+
 if __name__ == "__main__":
     unittest.main()

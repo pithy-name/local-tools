@@ -64,11 +64,19 @@ output_dir: redacted
 # mirror the input (copy unhandled files through unchanged).
 copy_unhandled: false
 
+# Nested-JSON decoding. Some JSON files store a whole document as an *escaped
+# JSON string* inside a field (double-encoded — e.g. rich-text editor "delta"
+# blobs like {"richText": "[{\"text\":\"…\"}]"}). When true (default), a string
+# value that is itself valid JSON is decoded, its inner text redacted, then
+# re-encoded — so the analyzer sees clean prose instead of NER-tagging the raw
+# markup as bogus entities, and the file round-trips. Set false to treat such
+# strings as opaque text (e.g. if you have prose that is coincidentally valid JSON).
+decode_nested_json: true
+
 # File types to exclude entirely — not processed, not copied to redacted/.
 # Useful for binary formats that can't be text-redacted (video, audio)
 # or types you want to keep out of downstream tools altogether.
 skip_extensions:
-  - .pdf
   - .mp4
   - .mov
   - .m4v

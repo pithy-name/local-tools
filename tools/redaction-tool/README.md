@@ -106,6 +106,51 @@ You then copy the ones you want into `custom_keywords` in `config.yaml` yourself
 A **text-only, keyword-only** run loads no model: fast and fully auditable. The default
 config ships in NER mode, so the model loads.
 
+## Command reference — every variation
+
+Pick the config mode first (table above), then the command. All examples assume the venv is
+active (`source .venv/bin/activate`).
+
+**NER mode** (default config — `entities` populated). Detects and redacts *every* name, email,
+phone, org, and location the model finds — see the warning at the end of this section.
+
+```bash
+python redact.py <folder> --dry-run          # preview every detected entity, write nothing
+python redact.py <folder>                     # redact for real → <folder>/redacted/
+python redact.py <folder> --scan              # list candidate identities, change nothing
+```
+
+**Keyword-only mode** (`entities: []`). Redacts *only* the exact strings in `custom_keywords`
+— nothing else is touched. Deterministic, auditable, no model for text-only input.
+
+```bash
+python redact.py <folder> --dry-run          # preview keyword hits only
+python redact.py <folder>                     # redact only your listed terms
+```
+
+**Restrict file types for one run** (overrides `include_extensions`):
+
+```bash
+python redact.py <folder> --include .md,.txt          # only Markdown + text
+python redact.py <folder> --include .json --dry-run   # only JSON, preview
+```
+
+**Two-config pattern.** `--config` swaps the *entire* config file, so keep one NER config and
+one keyword-only config side by side and choose at runtime:
+
+```bash
+python redact.py <folder> --config keyword-only.yaml  # explicit-terms-only run
+python redact.py <folder> --config ner.yaml --dry-run # auto-detect, preview
+```
+
+> **⚠ What actually gets redacted.** In **NER mode** the tool redacts *every* span matching the
+> entity *types* in `entities` (every PERSON, EMAIL, PHONE, ORGANIZATION, LOCATION it detects) —
+> **not** an allow-list of specific names. `custom_keywords` are layered *on top* with your own
+> replacements. If you want *"only the exact terms I listed get touched, nothing else,"* use
+> **keyword-only mode** (`entities: []`). Only `--include` (file types) and `--config` (whole
+> file) override config at runtime; `entities`, `custom_keywords`, and `replacement` are
+> config-only.
+
 ## How it works
 
 - **Text** (`.md .txt .html .json .csv`) — find→replace from your `custom_keywords`

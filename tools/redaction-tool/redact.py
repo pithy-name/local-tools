@@ -51,6 +51,8 @@ DEFAULT_CONFIG: dict = {
     "spacy_model": "en_core_web_lg",  # change to en_core_web_sm for a ~12MB model
     "output_dir": "redacted",    # created inside input_dir
     "copy_unhandled": False,     # leak guard: don't copy unhandled file types into redacted/
+    "decode_nested_json": True,  # JSON string values that are themselves JSON (double-encoded
+                                 # blobs, e.g. rich-text deltas) → decode, redact inner text, re-encode
     "include_extensions": [          # allowlist of types to process (handled set)
         ".md", ".txt", ".html", ".htm", ".json", ".csv",
         ".pdf",
@@ -156,6 +158,37 @@ def make_keyword_redactor_from_config(cfg: dict):
     return KeywordRedactor(mappings)
 
 
+# Presidio emits benign WARNING noise we suppress at the source logger:
+#   • "<TYPE> is not mapped to a Presidio entity" — spaCy entity types (CARDINAL,
+#     MONEY, …) Presidio has no recognizer for; emitted per-token during analyze().
+#   • "Recognizer not added to registry because language is not supported …" —
+#     locale-specific predefined recognizers (e.g. the Spanish CreditCardRecognizer,
+#     passport recognizers) skipped because this registry is English-only; emitted
+#     while the AnalyzerEngine is being constructed.
+# Both are expected for an en-only setup. The substring match catches every such
+# recognizer regardless of name/language. The filter must be installed BEFORE the
+# AnalyzerEngine is built, since the language warning fires during construction.
+_BENIGN_PRESIDIO_LOG_SUBSTRINGS = (
+    "is not mapped to a Presidio entity",
+    "Recognizer not added to registry because language is not supported",
+)
+
+
+class _BenignPresidioFilter(logging.Filter):
+    def filter(self, record):
+        msg = record.getMessage()
+        return not any(s in msg for s in _BENIGN_PRESIDIO_LOG_SUBSTRINGS)
+
+
+def _silence_benign_presidio_warnings() -> None:
+    """Attach the benign-noise filter to Presidio's loggers (hyphen + underscore
+    spellings). Idempotent — safe to call on every build_analyzer()."""
+    for name in ("presidio-analyzer", "presidio_analyzer"):
+        lg = logging.getLogger(name)
+        if not any(isinstance(f, _BenignPresidioFilter) for f in lg.filters):
+            lg.addFilter(_BenignPresidioFilter())
+
+
 def build_analyzer(cfg: dict) -> tuple:
     """
     Return (AnalyzerEngine, kw_replacements).
@@ -164,6 +197,10 @@ def build_analyzer(cfg: dict) -> tuple:
     """
     from presidio_analyzer import AnalyzerEngine, PatternRecognizer, Pattern
     from presidio_analyzer.nlp_engine import NlpEngineProvider
+
+    # Install before the engine/registry is built — the unsupported-language
+    # warnings fire during AnalyzerEngine construction below.
+    _silence_benign_presidio_warnings()
 
     model_name = cfg.get("spacy_model", "en_core_web_lg")
     nlp_cfg = {
@@ -179,17 +216,6 @@ def build_analyzer(cfg: dict) -> tuple:
         sys.exit(1)
 
     analyzer = AnalyzerEngine(nlp_engine=nlp_engine, supported_languages=["en"])
-    # Suppress Presidio's per-token "not mapped" noise — these are spaCy entity types
-    # (CARDINAL, MONEY, etc.) that Presidio has no recognizer for; harmless to ignore.
-    # Presidio uses "presidio-analyzer" (hyphen) as its logger name.
-    import logging as _logging
-
-    class _NoMappingFilter(_logging.Filter):
-        def filter(self, record):
-            return "is not mapped to a Presidio entity" not in record.getMessage()
-
-    for _name in ("presidio-analyzer", "presidio_analyzer"):
-        _logging.getLogger(_name).addFilter(_NoMappingFilter())
 
     keywords = normalize_keywords(cfg)
     kw_replacements: dict[str, Optional[str]] = {}
@@ -334,22 +360,45 @@ def process_html(
     return total
 
 
-def _walk_json(obj, redact_one):
+def _looks_like_json(s: str) -> bool:
+    """Cheap pre-check before a json.loads probe: only strings that begin with
+    `{` or `[` could be a nested JSON object/array, so skip the parse on everything
+    else (the overwhelmingly common case is plain prose)."""
+    t = s.lstrip()
+    return bool(t) and t[0] in "[{"
+
+
+def _walk_json(obj, redact_one, decode_nested=True):
     """Recursively redact string VALUES via redact_one(s)->(s', n). Keys and
-    non-strings pass through. Returns (new_obj, total_swaps)."""
+    non-strings pass through. Returns (new_obj, total_swaps).
+
+    When decode_nested is set (config: decode_nested_json), a string value that is
+    ITSELF serialized JSON — a double-encoded blob, e.g. a rich-text delta stored as
+    a string — is decoded, its inner string values redacted the same way, then
+    re-encoded. This lets the analyzer read clean text runs instead of raw markup
+    (otherwise NER tags JSON syntax as bogus entities), and the file round-trips.
+    Fully generic: no field names are assumed."""
     if isinstance(obj, str):
+        if decode_nested and _looks_like_json(obj):
+            try:
+                inner = json.loads(obj)
+            except ValueError:
+                inner = None
+            if isinstance(inner, (dict, list)):
+                new_inner, n = _walk_json(inner, redact_one, decode_nested)
+                return json.dumps(new_inner, ensure_ascii=False), n
         return redact_one(obj)
     if isinstance(obj, list):
         out, total = [], 0
         for v in obj:
-            nv, n = _walk_json(v, redact_one)
+            nv, n = _walk_json(v, redact_one, decode_nested)
             out.append(nv)
             total += n
         return out, total
     if isinstance(obj, dict):
         out, total = {}, 0
         for k, v in obj.items():
-            nv, n = _walk_json(v, redact_one)
+            nv, n = _walk_json(v, redact_one, decode_nested)
             out[k] = nv
             total += n
         return out, total
@@ -364,7 +413,8 @@ def process_json(
     JSON. Keys, numbers, bools, nulls pass through; originals never modified."""
     data = json.loads(src.read_text(encoding="utf-8-sig", errors="replace"))
     redacted, total = _walk_json(
-        data, lambda s: _redact_text(s, analyzer, cfg, kw_replacements, kr, collector))
+        data, lambda s: _redact_text(s, analyzer, cfg, kw_replacements, kr, collector),
+        decode_nested=cfg.get("decode_nested_json", True))
     if not dry_run:
         dst.parent.mkdir(parents=True, exist_ok=True)
         dst.write_text(json.dumps(redacted, ensure_ascii=False, indent=2) + "\n",
@@ -741,7 +791,6 @@ def run(input_dir: Path, cfg: dict, dry_run: bool) -> int:
         analyzer, kw_replacements = None, {}
         log.info("Keyword-only, text-only input — skipping spaCy model load.")
 
-    include_set = set(_normalize_extensions(cfg.get("include_extensions", [])))
     blackout_counts = Counter()   # per-keyword image/PDF redaction counts
     binary_engaged = False        # did any image/PDF get processed this run?
     uncopied_paths = []           # leak guard: files left in the source (not copied)
@@ -864,12 +913,23 @@ def run(input_dir: Path, cfg: dict, dry_run: bool) -> int:
         # This list surfaces NER discoveries the user doesn't know about yet.
         ner_only = {k: v for k, v in collector.items() if not k.startswith("KW_")}
         if ner_only:
-            lines = ["\n[DRY RUN] Entities detected (would be redacted):"]
-            for etype in sorted(ner_only):
-                lines.append(f"  {etype}:")
-                for txt, cnt in sorted(ner_only[etype].items(), key=lambda x: x[0].lower()):
-                    suffix = f"  ×{cnt}" if cnt > 1 else ""
-                    lines.append(f"    {txt}{suffix}")
+            # ONE alphabetical list across all entity types, with the type shown inline
+            # on the same line (not grouped under TYPE: headers). Each captured span is
+            # collapsed to a single line so multi-line spans don't wrap into confusing
+            # carryover lines. (TODO display polish: truncate over-long spans + apply the
+            # same collapse to the --scan report — see plans/TODO.md.)
+            rows = []
+            for etype, texts in ner_only.items():
+                for txt, cnt in texts.items():
+                    display = " ".join(txt.split()) or repr(txt)   # collapse newlines/runs
+                    rows.append((display, etype, cnt))
+            rows.sort(key=lambda r: (r[0].lower(), r[1]))
+            width = min(max((len(d) for d, _, _ in rows), default=0), 60)
+            lines = [f"\n[DRY RUN] Entities detected (would be redacted) — "
+                     f"{len(rows)} unique:"]
+            for display, etype, cnt in rows:
+                suffix = f"  ×{cnt}" if cnt > 1 else ""
+                lines.append(f"  {display.ljust(width)}  ({etype}){suffix}")
             log.info("\n".join(lines))
 
     return stats["errors"]
