@@ -177,16 +177,19 @@ class TestRunLevelCoverage(unittest.TestCase):
         self.assertIn("[PERSON_A]", out)
         self.assertNotIn("Mary Bello", out)
 
-    def test_per_pseudonym_report_emitted_by_run(self):
+    def test_unified_report_emitted_by_run(self):
         tmp = Path(tempfile.mkdtemp())
         (tmp / "n.md").write_text("Mary Bello and Mary Bello", encoding="utf-8")
         cfg = _kw_cfg([{"find": "Mary Bello", "replace": "[PERSON_A]"}])
         with self.assertLogs("redact", level="INFO") as cm:
             redact.run(tmp, cfg, dry_run=False)
         log = "\n".join(cm.output)
+        # Keyword-only mode now prints the SAME unified report as every other mode.
+        self.assertIn("CUSTOM KEYWORDS — replaced", log)
         self.assertIn("[PERSON_A]", log)
-        self.assertIn("text-sub: 2", log)
-        self.assertIn("blackout: N/A", log)
+        self.assertIn("Mary Bello", log)
+        self.assertIn("×2", log)
+        self.assertIn("GRAND TOTAL: 2", log)
 
 
 class TestLeakGuard(unittest.TestCase):

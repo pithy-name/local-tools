@@ -326,12 +326,14 @@ def _redact_text(text, analyzer, cfg: dict, kw_replacements: dict, kr, collector
         out = kr.redact(text)
         return out, sum(kr.counts.values()) - before
     results = analyze(text, analyzer, cfg, kw_replacements)
+    kept = _deoverlap(results)
     if collector is not None:
-        for r in results:
+        # Collect from kept (post-deoverlap) — the spans actually redacted — so the
+        # report's counts equal the real redaction count, not the raw pre-overlap hits.
+        for r in kept:
             entity_text = text[r.start:r.end]
             bucket = collector.setdefault(r.entity_type, {})
             bucket[entity_text] = bucket.get(entity_text, 0) + 1
-    kept = _deoverlap(results)
     return anonymize(text, kept, cfg["replacement"], kw_replacements), len(kept)
 
 
@@ -602,11 +604,13 @@ def _ocr_backend_available(cfg: dict) -> bool:
 
 # ── Image redaction ───────────────────────────────────────────────────────────
 
-def redact_image_pixels(img, analyzer, cfg: dict):
+def redact_image_pixels(img, analyzer, cfg: dict, collector=None):
     """
     OCR the image, run Presidio on each text observation, black out sensitive regions.
     Returns (modified PIL.Image, num_redactions, blackout_counts) — blackout_counts is a
     Counter keyed by the matched keyword's `find` (for the per-keyword report).
+    collector, when set, accumulates {entity_type: {matched_text: count}} so image/PDF
+    matches are itemized in the unified report alongside text matches.
     Conservative: if any PII found in a line's observation, the whole bounding box
     is blacked out — no partial-line sub-pixel surgery needed.
     """
@@ -638,16 +642,20 @@ def redact_image_pixels(img, analyzer, cfg: dict):
                 find = kw_finds.get(r.entity_type)
                 if find is not None:
                     blackout[find] += 1
+                if collector is not None:
+                    entity_text = obs["text"][r.start:r.end]
+                    bucket = collector.setdefault(r.entity_type, {})
+                    bucket[entity_text] = bucket.get(entity_text, 0) + 1
 
     return img, count, blackout
 
 
-def process_image(src: Path, dst: Path, analyzer, cfg: dict, dry_run: bool):
+def process_image(src: Path, dst: Path, analyzer, cfg: dict, dry_run: bool, collector=None):
     """Returns (num_redactions, blackout_counts)."""
     from PIL import Image
 
     img = Image.open(str(src)).convert("RGB")
-    img, count, blackout = redact_image_pixels(img, analyzer, cfg)
+    img, count, blackout = redact_image_pixels(img, analyzer, cfg, collector=collector)
 
     if not dry_run:
         dst.parent.mkdir(parents=True, exist_ok=True)
@@ -661,11 +669,13 @@ def process_image(src: Path, dst: Path, analyzer, cfg: dict, dry_run: bool):
 
 # ── PDF redaction ─────────────────────────────────────────────────────────────
 
-def process_pdf(src: Path, dst: Path, analyzer, cfg: dict, dry_run: bool):
+def process_pdf(src: Path, dst: Path, analyzer, cfg: dict, dry_run: bool, collector=None):
     """
     Digital pages  → PyMuPDF native redaction annotations (preserves PDF structure).
     Scanned pages  → Render to image → Apple Vision OCR → black boxes → reinsert.
     Output is a new PDF saved to dst. Returns (num_redactions, blackout_counts).
+    collector, when set, accumulates {entity_type: {matched_text: count}} so PDF
+    matches are itemized in the unified report alongside text matches.
     """
     import fitz
     from PIL import Image
@@ -712,6 +722,9 @@ def process_pdf(src: Path, dst: Path, analyzer, cfg: dict, dry_run: bool):
                 total += 1
                 if find is not None:
                     blackout[find] += 1
+                if collector is not None:
+                    bucket = collector.setdefault(r.entity_type, {})
+                    bucket[phrase] = bucket.get(phrase, 0) + 1
                 for quad in quads:
                     out_page.add_redact_annot(quad, fill=(0, 0, 0))
 
@@ -724,7 +737,7 @@ def process_pdf(src: Path, dst: Path, analyzer, cfg: dict, dry_run: bool):
             pix = page.get_pixmap(matrix=mat)
             img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
 
-            img, count, page_blackout = redact_image_pixels(img, analyzer, cfg)
+            img, count, page_blackout = redact_image_pixels(img, analyzer, cfg, collector=collector)
             total += count
             blackout.update(page_blackout)
 
@@ -766,6 +779,14 @@ def _copy_or_skip_unhandled(src: Path, dst: Path, cfg: dict, dry_run: bool, stat
     return True
 
 
+def _merge_collector(dst: dict, src: dict) -> None:
+    """Fold a per-file {entity_type: {text: count}} tally into the run-level collector."""
+    for etype, texts in src.items():
+        bucket = dst.setdefault(etype, {})
+        for text, count in texts.items():
+            bucket[text] = bucket.get(text, 0) + count
+
+
 def run(input_dir: Path, cfg: dict, dry_run: bool) -> int:
     """Process all files in input_dir. Returns the number of per-file errors."""
     output_dir = input_dir / cfg["output_dir"]
@@ -776,6 +797,7 @@ def run(input_dir: Path, cfg: dict, dry_run: bool) -> int:
     stats: dict = {"md": 0, "txt": 0, "html": 0, "json": 0, "csv": 0, "pdf": 0, "img": 0,
                    "copy": 0, "uncopied": 0, "skip": 0, "errors": 0}
     total_redactions = 0
+    files_with_matches = 0   # files with >=1 redaction (for the report header)
 
     # Collect all files first (excluding the output dir) so we can decide what to load.
     all_files = sorted(f for f in input_dir.rglob("*") if f.is_file())
@@ -787,8 +809,10 @@ def run(input_dir: Path, cfg: dict, dry_run: bool) -> int:
     # keyword run loads no model at all; a text-only config never loads one either.
     BINARY_EXTS = {".pdf", ".png", ".jpg", ".jpeg", ".gif", ".webp"}
     keyword_only = not cfg.get("entities")
-    # Collect detected entity texts during dry-run (NER mode only) for user review.
-    collector = {} if (dry_run and not keyword_only) else None
+    # One tally feeds the unified end-of-run report for EVERY mode, dry-run AND real run
+    # (real==dry). Populated by the NER text path (_redact_text) and the image/PDF path;
+    # keyword-only text counts come from kr.counts and are merged in at report time.
+    collector: dict = {}
     include_set = set(_normalize_extensions(cfg.get("include_extensions", [])))
     # Only count a binary as "will be processed" if it passes the include_extensions allowlist.
     has_binary = any(
@@ -814,8 +838,6 @@ def run(input_dir: Path, cfg: dict, dry_run: bool) -> int:
         analyzer, kw_replacements = None, {}
         log.info("Keyword-only, text-only input — skipping spaCy model load.")
 
-    blackout_counts = Counter()   # per-keyword image/PDF redaction counts
-    binary_engaged = False        # did any image/PDF get processed this run?
     uncopied_paths = []           # leak guard: files left in the source (not copied)
     error_files = []              # files that raised during processing
     for src in files:
@@ -824,6 +846,12 @@ def run(input_dir: Path, cfg: dict, dry_run: bool) -> int:
         ext = src.suffix.lower()
 
         try:
+            n = 0
+            # Per-file tally: merged into the run-level collector ONLY on success
+            # (below). A handler that raises mid-file leaves its partial matches here,
+            # discarded — so the report's grand_total never counts a failed file that
+            # total_redactions excluded (keeps grand_total == total_redactions).
+            file_collector: dict = {}
             if ext in skip_exts:
                 log.debug(f"  SKIP {rel}")
                 stats["skip"] += 1
@@ -834,47 +862,43 @@ def run(input_dir: Path, cfg: dict, dry_run: bool) -> int:
                     uncopied_paths.append(str(rel))
                 continue
             if ext == ".md":
-                n = process_markdown(src, dst, analyzer, cfg, kw_replacements, dry_run, kr=kr, collector=collector)
+                n = process_markdown(src, dst, analyzer, cfg, kw_replacements, dry_run, kr=kr, collector=file_collector)
                 log.info(f"  MD   {rel}  → {n} redaction(s)")
                 stats["md"] += 1
                 total_redactions += n
 
             elif ext == ".txt":
-                n = process_markdown(src, dst, analyzer, cfg, kw_replacements, dry_run, kr=kr, collector=collector)
+                n = process_markdown(src, dst, analyzer, cfg, kw_replacements, dry_run, kr=kr, collector=file_collector)
                 log.info(f"  TXT  {rel}  → {n} redaction(s)")
                 stats["txt"] += 1
                 total_redactions += n
 
             elif ext in (".html", ".htm"):
-                n = process_html(src, dst, analyzer, cfg, kw_replacements, dry_run, kr=kr, collector=collector)
+                n = process_html(src, dst, analyzer, cfg, kw_replacements, dry_run, kr=kr, collector=file_collector)
                 log.info(f"  HTML {rel}  → {n} redaction(s)")
                 stats["html"] += 1
                 total_redactions += n
 
             elif ext == ".json":
-                n = process_json(src, dst, analyzer, cfg, kw_replacements, dry_run, kr=kr, collector=collector)
+                n = process_json(src, dst, analyzer, cfg, kw_replacements, dry_run, kr=kr, collector=file_collector)
                 log.info(f"  JSON {rel}  → {n} redaction(s)")
                 stats["json"] += 1
                 total_redactions += n
 
             elif ext == ".csv":
-                n = process_csv(src, dst, analyzer, cfg, kw_replacements, dry_run, kr=kr, collector=collector)
+                n = process_csv(src, dst, analyzer, cfg, kw_replacements, dry_run, kr=kr, collector=file_collector)
                 log.info(f"  CSV  {rel}  → {n} redaction(s)")
                 stats["csv"] += 1
                 total_redactions += n
 
             elif ext == ".pdf":
-                n, bc = process_pdf(src, dst, analyzer, cfg, dry_run)
-                blackout_counts.update(bc)
-                binary_engaged = True
+                n, _ = process_pdf(src, dst, analyzer, cfg, dry_run, collector=file_collector)
                 log.info(f"  PDF  {rel}  → {n} redaction(s)")
                 stats["pdf"] += 1
                 total_redactions += n
 
             elif ext in (".png", ".jpg", ".jpeg", ".gif", ".webp"):
-                n, bc = process_image(src, dst, analyzer, cfg, dry_run)
-                blackout_counts.update(bc)
-                binary_engaged = True
+                n, _ = process_image(src, dst, analyzer, cfg, dry_run, collector=file_collector)
                 log.info(f"  IMG  {rel}  → {n} redaction(s)")
                 stats["img"] += 1
                 total_redactions += n
@@ -883,6 +907,11 @@ def run(input_dir: Path, cfg: dict, dry_run: bool) -> int:
                 # Allowlisted but no handler for this type → leak guard.
                 if _copy_or_skip_unhandled(src, dst, cfg, dry_run, stats):
                     uncopied_paths.append(str(rel))
+
+            # Reached only if no handler raised → commit this file's matches + tally.
+            _merge_collector(collector, file_collector)
+            if n:
+                files_with_matches += 1
 
         except Exception as exc:
             log.error(f"  ERR  {rel}: {exc}")
@@ -920,40 +949,33 @@ def run(input_dir: Path, cfg: dict, dry_run: bool) -> int:
             + "\n".join(f"    {p}" for p in error_files)
         )
 
-    # Keyword-only mode: per-pseudonym count report. text-sub = keyword_redactor's real
-    # per-keyword text tallies; blackout = real per-keyword counts from the image/PDF path.
-    # blackout_counts is None when no image/PDF ran → the column renders "N/A" (mechanism not
-    # engaged); a dict (with 0 for unmatched keywords) once any image/PDF was processed.
-    if kr is not None and kr.mappings:
-        from report_format import build_count_report, render_count_report
-        report = build_count_report(kr.mappings, kr.counts,
-                                    blackout_counts if binary_engaged else None)
-        log.info("\n  Per-pseudonym counts (text-sub | blackout):\n"
-                 + render_count_report(report))
-
-    if dry_run and collector:
-        # KW_i entity types are user-configured custom keywords — skip them here.
-        # This list surfaces NER discoveries the user doesn't know about yet.
-        ner_only = {k: v for k, v in collector.items() if not k.startswith("KW_")}
-        if ner_only:
-            # ONE alphabetical list across all entity types, with the type shown inline
-            # on the same line (not grouped under TYPE: headers). Each captured span is
-            # collapsed to a single line so multi-line spans don't wrap into confusing
-            # carryover lines. (TODO display polish: truncate over-long spans + apply the
-            # same collapse to the --scan report — see plans/TODO.md.)
-            rows = []
-            for etype, texts in ner_only.items():
-                for txt, cnt in texts.items():
-                    display = " ".join(txt.split()) or repr(txt)   # collapse newlines/runs
-                    rows.append((display, etype, cnt))
-            rows.sort(key=lambda r: (r[0].lower(), r[1]))
-            width = min(max((len(d) for d, _, _ in rows), default=0), 60)
-            lines = [f"\n[DRY RUN] Entities detected (would be redacted) — "
-                     f"{len(rows)} unique:"]
-            for display, etype, cnt in rows:
-                suffix = f"  ×{cnt}" if cnt > 1 else ""
-                lines.append(f"  {display.ljust(width)}  ({etype}){suffix}")
-            log.info("\n".join(lines))
+    # Unified end-of-run report — the SAME report for --dry-run and a real write run
+    # (real==dry), in EVERY mode. Sourced from one tally: the collector (NER text +
+    # image/PDF matches) merged with keyword_redactor's per-find counts (keyword-only
+    # text). Matched text is printed (audit visibility) — same exposure as --scan.
+    from report_format import (
+        assemble_report_inputs, build_redaction_report, render_redaction_report)
+    keywords = normalize_keywords(cfg)
+    kr_counts = kr.counts if kr is not None else None
+    entity_tally, keyword_tally = assemble_report_inputs(
+        collector, keywords, kr_counts=kr_counts)
+    # Per-entity replacement tokens (e.g. URL → [URL]); KW_* are reported separately.
+    entity_repls = {k: v for k, v in (kw_replacements or {}).items()
+                    if not k.startswith("KW_") and v is not None}
+    rep = build_redaction_report(
+        entity_tally, keyword_tally,
+        replacement_char=cfg["replacement"], entity_replacements=entity_repls)
+    files_scanned = (stats["md"] + stats["txt"] + stats["html"] + stats["json"]
+                     + stats["csv"] + stats["pdf"] + stats["img"])
+    report_text = render_redaction_report(
+        rep,
+        title="REDACTION PREVIEW (--dry-run)" if dry_run else "REDACTION COMPLETE",
+        files_scanned=files_scanned,
+        files_matched=files_with_matches,
+        extensions=sorted(include_set) if include_set else None,
+        output_dir=None if dry_run else output_dir,
+    )
+    log.info("\n" + report_text)
 
     return stats["errors"]
 

@@ -1,5 +1,6 @@
-"""redact_image_pixels attributes each blacked-out match to the right keyword,
-so the report's `blackout` column can show real per-keyword counts.
+"""redact_image_pixels attributes each blacked-out match to the right keyword
+(the `blackout` Counter return) AND, via the threaded collector, itemizes image/PDF
+matches in the unified end-of-run report.
 
     .venv/bin/python -m unittest tests.test_blackout_counts -v
 """
@@ -87,7 +88,9 @@ class TestBlackoutCounts(unittest.TestCase):
         self.assertEqual(dict(blackout), {"Acme Corp": 1})
         self.assertGreaterEqual(count, 2)   # PERSON (Marcus Webb) + keyword (Acme Corp)
 
-    def test_run_report_shows_real_blackout_counts(self):
+    def test_run_report_itemizes_image_keyword_match(self):
+        """An image keyword match is itemized in the unified report (via the threaded
+        collector) — same report every mode."""
         import tempfile
         from PIL import Image
         tmp = Path(tempfile.mkdtemp())
@@ -103,8 +106,10 @@ class TestBlackoutCounts(unittest.TestCase):
         finally:
             redact.ocr_image = orig
         report = "\n".join(cm.output)
-        self.assertIn("(Marcus Webb)  text-sub: 0  blackout: 1", report)
-        self.assertNotIn("blackout: N/A", report)   # image engaged → real counts, not N/A
+        self.assertIn("CUSTOM KEYWORDS — replaced", report)
+        self.assertIn("Marcus Webb", report)        # itemized from the image
+        self.assertIn("[P]", report)                # its pseudonym
+        self.assertIn("GRAND TOTAL: 1", report)
 
 
 if __name__ == "__main__":

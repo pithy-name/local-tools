@@ -1,9 +1,16 @@
-"""dry-run in NER mode must print detected entity names (not just counts).
+"""run()'s unified end-of-run report — dry-run AND real write run (real==dry).
 
-run() with dry_run=True and entities set should log the actual text spans that
-would be redacted — so the user can seed custom_keywords without writing anything.
+The report is the SAME for `--dry-run` and a real run (real==dry), printed in every
+mode. It itemizes matched text by section (PATTERN MATCHES / MODEL ENTITIES / CUSTOM
+KEYWORDS blacked out / replaced). Per the 2026-06-11 decision, matched PII IS printed
+in the real run too (audit visibility, same exposure as --scan) — this intentionally
+reverses the earlier guards that hid entity text from live runs and keyword text from
+the list. See tools/redaction-tool/decisions.md.
 
-    .venv/bin/python -m unittest tests.test_dry_run_entities -v
+build_analyzer is patched so no spaCy model loads; analyze() is patched to return known
+spans, so these run fast under system python3.
+
+    python3 -m unittest tests.test_dry_run_entities -v
 """
 import sys
 import tempfile
@@ -15,10 +22,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import redact
 
 
-def _ner_cfg():
+def _ner_cfg(**over):
     cfg = dict(redact.DEFAULT_CONFIG)
     cfg["entities"] = ["PERSON"]
     cfg["custom_keywords"] = []
+    cfg.update(over)
     return cfg
 
 
@@ -30,136 +38,106 @@ def _span(start, end, entity_type):
     return r
 
 
-class TestDryRunEntityList(unittest.TestCase):
-    """run() dry-run NER mode must log detected entity names."""
+def _run(tc, text, spans, cfg, dry_run):
+    """Run run() over one note.md with build_analyzer/analyze patched; return log text."""
+    tmpdir = Path(tempfile.mkdtemp())
+    (tmpdir / "note.md").write_text(text, encoding="utf-8")
+    with patch("redact.build_analyzer", return_value=(MagicMock(), {})):
+        with patch("redact.analyze", return_value=spans):
+            with tc.assertLogs("redact", level="INFO") as cm:
+                redact.run(tmpdir, cfg, dry_run=dry_run)
+    return "\n".join(cm.output)
 
-    def test_dry_run_logs_detected_person_name(self):
-        """Detected entity text must appear in run() log output during dry-run."""
+
+class TestUnifiedReportNER(unittest.TestCase):
+    def test_dry_run_shows_ner_entity_under_model_section(self):
+        out = _run(self, "Hello John Smith today", [_span(6, 16, "PERSON")],
+                   _ner_cfg(), dry_run=True)
+        self.assertIn("MODEL ENTITIES", out)
+        self.assertIn("PERSON", out)
+        self.assertIn("John Smith", out)         # matched text itemized
+
+    def test_real_run_shows_entity_text_too(self):
+        """Reversed guard: the live run now prints the matched text (real==dry)."""
+        out = _run(self, "Hello John Smith today", [_span(6, 16, "PERSON")],
+                   _ner_cfg(), dry_run=False)
+        self.assertIn("John Smith", out)
+        self.assertIn("REDACTION COMPLETE", out)
+        self.assertIn("Output at:", out)
+
+    def test_real_equals_dry_body_identical(self):
+        text, spans = "Hello John Smith today", [_span(6, 16, "PERSON")]
+        dry = _run(self, text, spans, _ner_cfg(), dry_run=True)
+        real = _run(self, text, spans, _ner_cfg(), dry_run=False)
+
+        def body(s):
+            start = s.index("PATTERN MATCHES")
+            end = s.index("GRAND TOTAL")
+            end = s.index("\n", end)
+            return s[start:end]
+
+        self.assertEqual(body(dry), body(real))
+
+    def test_grand_total_matches_total_redactions(self):
+        out = _run(self, "Hello John Smith today", [_span(6, 16, "PERSON")],
+                   _ner_cfg(), dry_run=True)
+        self.assertIn("Total redactions : 1", out)
+        self.assertIn("GRAND TOTAL: 1", out)
+
+
+class TestFailedFileInvariant(unittest.TestCase):
+    def test_partial_matches_from_a_raising_handler_are_discarded(self):
+        """A handler that populates the collector then raises must NOT leak its partial
+        matches into the report — grand_total stays equal to total_redactions."""
         tmpdir = Path(tempfile.mkdtemp())
-        (tmpdir / "note.md").write_text("Hello John Smith today", encoding="utf-8")
+        (tmpdir / "bad.md").write_text("anything", encoding="utf-8")
 
-        cfg = _ner_cfg()
-        # Patch analyze to return a known PERSON span covering "John Smith" (6:16)
-        r = _span(6, 16, "PERSON")
-        with patch("redact.analyze", return_value=[r]):
-            with self.assertLogs("redact", level="INFO") as cm:
-                redact.run(tmpdir, cfg, dry_run=True)
+        def boom(src, dst, analyzer, cfg, kw_replacements, dry_run, kr=None, collector=None):
+            collector.setdefault("PERSON", {})["Leaked Name"] = 1   # partial populate
+            raise RuntimeError("handler blew up mid-file")
 
-        all_output = "\n".join(cm.output)
-        self.assertIn("John Smith", all_output,
-                      "dry-run must log detected entity names; got:\n" + all_output)
+        with patch("redact.build_analyzer", return_value=(MagicMock(), {})):
+            with patch("redact.process_markdown", boom):
+                with self.assertLogs("redact", level="INFO") as cm:
+                    redact.run(tmpdir, _ner_cfg(), dry_run=True)
+        out = "\n".join(cm.output)
 
-    def test_dry_run_entity_list_not_shown_in_live_run(self):
-        """Entity list output is dry-run only — live run must not log it."""
+        self.assertNotIn("Leaked Name", out)     # partial match discarded
+        self.assertIn("GRAND TOTAL: 0", out)     # failed file contributes nothing
+        self.assertIn("Total redactions : 0", out)
+
+
+class TestCustomKeywordsShown(unittest.TestCase):
+    def test_keyword_find_shown_internal_label_hidden(self):
+        """Custom keywords ARE now itemized (find + pseudonym); the internal KW_i
+        label is NOT exposed."""
+        cfg = _ner_cfg(custom_keywords=[{"find": "John Smith", "replace": "J.S."}])
+        out = _run(self, "Hello John Smith today", [_span(6, 16, "KW_0")], cfg, dry_run=True)
+        self.assertIn("CUSTOM KEYWORDS — replaced", out)
+        self.assertIn("John Smith", out)         # the find, itemized
+        self.assertIn("J.S.", out)               # its pseudonym
+        self.assertNotIn("KW_0", out)            # internal label stays hidden
+
+
+class TestKeywordOnlyModeUnified(unittest.TestCase):
+    def test_keyword_only_mode_prints_unified_report(self):
+        """Keyword-only mode (entities=[]) uses the SAME unified report — no model,
+        no patching; kr drives the counts."""
         tmpdir = Path(tempfile.mkdtemp())
-        (tmpdir / "note.md").write_text("Hello John Smith today", encoding="utf-8")
-
-        cfg = _ner_cfg()
-        r = _span(6, 16, "PERSON")
-        with patch("redact.analyze", return_value=[r]):
-            with self.assertLogs("redact", level="INFO") as cm:
-                redact.run(tmpdir, cfg, dry_run=False)
-
-        all_output = "\n".join(cm.output)
-        self.assertNotIn("John Smith", all_output,
-                         "live run must not log original entity text (would expose PII in logs)")
-
-    def test_dry_run_entity_list_skipped_in_keyword_only_mode(self):
-        """Keyword-only mode (entities=[]) uses keyword_redactor, no NER entities to list."""
-        tmpdir = Path(tempfile.mkdtemp())
-        (tmpdir / "note.md").write_text("Hello secret today", encoding="utf-8")
-
+        (tmpdir / "note.md").write_text("Hello secret secret today", encoding="utf-8")
         cfg = dict(redact.DEFAULT_CONFIG)
         cfg["entities"] = []
         cfg["custom_keywords"] = [{"find": "secret", "replace": "[X]"}]
 
         with self.assertLogs("redact", level="INFO") as cm:
             redact.run(tmpdir, cfg, dry_run=True)
+        out = "\n".join(cm.output)
 
-        all_output = "\n".join(cm.output)
-        # keyword-only uses kr path — entity collector must not be active
-        self.assertNotIn("Entities detected", all_output)
-
-
-class TestDryRunKwFilter(unittest.TestCase):
-    """KW_i entity types (custom keywords) must not appear in the dry-run entity list.
-
-    Custom keywords are user-configured — they already know about them. The dry-run
-    entity list exists to surface NER discoveries the user does NOT know about.
-    """
-
-    def test_kw_entity_type_not_shown_in_dry_run_list(self):
-        """KW_0 label must not appear in dry-run output — it's an internal label."""
-        tmpdir = Path(tempfile.mkdtemp())
-        (tmpdir / "note.md").write_text("Hello John Smith today", encoding="utf-8")
-
-        cfg = dict(redact.DEFAULT_CONFIG)
-        cfg["entities"] = ["PERSON"]
-        cfg["custom_keywords"] = [{"find": "John Smith", "replace": "J.S."}]
-
-        # Return a KW_0 span (custom keyword match)
-        r = _span(6, 16, "KW_0")
-        with patch("redact.analyze", return_value=[r]):
-            with self.assertLogs("redact", level="INFO") as cm:
-                redact.run(tmpdir, cfg, dry_run=True)
-
-        all_output = "\n".join(cm.output)
-        self.assertNotIn("KW_0", all_output,
-                         "internal KW_i labels must not appear in dry-run entity list")
-        self.assertNotIn("John Smith", all_output,
-                         "custom keyword text must not appear — user already knows it")
-
-
-class TestFlatEntityList(unittest.TestCase):
-    """The dry-run entity list is ONE alphabetical list across all entity types,
-    with the type shown inline on the same line (not grouped under TYPE: headers),
-    and each entity collapsed to a single line."""
-
-    def _run_with_spans(self, text, spans, cfg=None):
-        tmpdir = Path(tempfile.mkdtemp())
-        (tmpdir / "note.md").write_text(text, encoding="utf-8")
-        cfg = cfg or _ner_cfg()
-        with patch("redact.analyze", return_value=spans):
-            with self.assertLogs("redact", level="INFO") as cm:
-                redact.run(tmpdir, cfg, dry_run=True)
-        return "\n".join(cm.output)
-
-    def test_type_shown_inline_not_grouped(self):
-        out = self._run_with_spans(
-            "John Smith met Acme",
-            [_span(0, 10, "PERSON"), _span(15, 19, "ORGANIZATION")])
-        person_line = next(l for l in out.splitlines() if "John Smith" in l)
-        self.assertIn("(PERSON)", person_line)        # type inline, same line
-        acme_line = next(l for l in out.splitlines() if "Acme" in l)
-        self.assertIn("(ORGANIZATION)", acme_line)
-        # Old grouped "TYPE:" headers are gone.
-        self.assertNotIn("PERSON:", out)
-        self.assertNotIn("ORGANIZATION:", out)
-
-    def test_single_alphabetical_order_across_types(self):
-        # Names chosen to not substring-collide with summary lines (e.g. "Markdown").
-        out = self._run_with_spans(
-            "Zara Acme Quinn",
-            [_span(0, 4, "PERSON"), _span(5, 9, "ORGANIZATION"), _span(10, 15, "PERSON")])
-        # Scope to entity rows only — they carry an inline "(TYPE)" marker.
-        rows = [l for l in out.splitlines() if "(" in l and ")" in l]
-        i_acme = next(i for i, l in enumerate(rows) if "Acme" in l)
-        i_quinn = next(i for i, l in enumerate(rows) if "Quinn" in l)
-        i_zara = next(i for i, l in enumerate(rows) if "Zara" in l)
-        self.assertLess(i_acme, i_quinn)              # one A-Z run, not per-type
-        self.assertLess(i_quinn, i_zara)
-
-    def test_newline_in_span_collapsed_to_one_line(self):
-        out = self._run_with_spans("Foo\nBar baz", [_span(0, 7, "PERSON")])  # "Foo\nBar"
-        line = next(l for l in out.splitlines() if "(PERSON)" in l)
-        self.assertIn("Foo Bar", line)                # collapsed onto the type's line
-        self.assertNotIn("\nBar\n", "\n" + out + "\n")  # no bare carryover line
-
-    def test_repeat_count_suffix(self):
-        out = self._run_with_spans(
-            "Sam and Sam", [_span(0, 3, "PERSON"), _span(8, 11, "PERSON")])
-        line = next(l for l in out.splitlines() if "Sam" in l and "(PERSON)" in l)
-        self.assertIn("×2", line)
+        self.assertIn("CUSTOM KEYWORDS — replaced", out)
+        self.assertIn("secret", out)
+        self.assertIn("[X]", out)
+        self.assertIn("×2", out)                 # matched twice
+        self.assertIn("GRAND TOTAL: 2", out)
 
 
 if __name__ == "__main__":
