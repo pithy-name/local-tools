@@ -51,7 +51,7 @@ replacement: "█████"
 #   en_core_web_md  — good accuracy, ~43 MB download
 #   en_core_web_sm  — acceptable, ~12 MB download (fastest setup)
 # After changing, run: python -m spacy download <model_name>
-spacy_model: en_core_web_lg
+spacy_model: en_core_web_sm
 
 # Subfolder created inside your input folder for redacted output.
 # Your originals are NEVER modified.

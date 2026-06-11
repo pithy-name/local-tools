@@ -56,7 +56,7 @@ automatically. Keep your real names/addresses in `config.yaml` (never committed)
 python3.11 -m venv .venv                   # create the virtual environment
 source .venv/bin/activate                  # activate it
 pip install -r requirements.txt            # install dependencies
-python -m spacy download en_core_web_lg    # download the NER model (~750 MB)
+python -m spacy download en_core_web_sm    # download the NER model (~750 MB)
 ```
 Non-macOS OCR: `brew install tesseract`, then uncomment `pytesseract` in `requirements.txt`.
 </details>
