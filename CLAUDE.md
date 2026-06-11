@@ -15,7 +15,7 @@ Git repository (`main` branch).
 ## Layout
 
 - `tools/` — runnable Python CLI tools, each in a kebab-case subfolder with README
-  - `redaction-tool/` — local PII redaction for a folder of files (spaCy + Presidio + Apple Vision OCR); has its own `.venv`, `setup.sh`, `requirements.txt`, `config.yaml`, and nested `CLAUDE.md`
+  - `redaction-tool/` — local PII redaction for a folder of files (spaCy + Presidio + Apple Vision OCR); has its own `.venv`, `setup.sh`, `requirements.txt`, nested `CLAUDE.md`, and `gen_keywords.py` (names-list → `custom_keywords` helper). Config: `demo.config.yaml` is the committed template; `config.yaml` (your real terms) is gitignored — `cp demo.config.yaml config.yaml` first.
   - `convert-to-md/` — `docx_to_md.py`, `html_to_md.py`
   - `find-duplicates/find_duplicates.py` — content-hash dedup; edit `TARGET_DIRECTORY` at top before running
   - `find-files/find_files.py` — `python find_files.py [directory] [extension]` (defaults: cwd, `.py`)

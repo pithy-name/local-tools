@@ -1,0 +1,3 @@
+# Your real config with actual redaction terms (PII) — never publish.
+# Copy demo.config.yaml -> config.yaml and edit.
+config.yaml

@@ -41,6 +41,15 @@ network calls, no cloud — nothing leaves your machine.
 bash setup.sh    # picks python3.11, builds .venv, installs deps, downloads the model (~750 MB, once)
 ```
 
+**Then create your config** (one-time). `config.yaml` is gitignored — it's where your
+real redaction terms live — so the repo ships only the `demo.config.yaml` template. Copy it:
+
+```bash
+cp demo.config.yaml config.yaml    # then edit config.yaml with your terms
+```
+The tool defaults to `config.yaml`, so `python redact.py <dir>` picks up your local config
+automatically. Keep your real names/addresses in `config.yaml` (never committed), not in `demo.config.yaml`.
+
 <details><summary>Manual setup / non-macOS OCR</summary>
 
 ```bash
@@ -180,16 +189,50 @@ So a keyword-only text run touches **none** of the model/OCR stack — just the 
 
 ## Configuration
 
-`config.yaml` is fully commented — open it for every option. The knobs you'll touch most:
+`demo.config.yaml` (the committed template — `cp demo.config.yaml config.yaml`) is fully
+commented; your real `config.yaml` is gitignored. The knobs you'll touch most:
 
 - `entities` — NER types to detect; `[]` = keyword-only (see the mode table). Available:
   `PERSON, EMAIL_ADDRESS, PHONE_NUMBER, ORGANIZATION, LOCATION, US_SSN, CREDIT_CARD,
-  IBAN_CODE, IP_ADDRESS, NRP`.
+  IBAN_CODE, IP_ADDRESS, NRP, URL`. Add `URL` to redact http(s) URLs to `[URL]`.
 - `custom_keywords` — exact strings to always redact; plain (`█████`) or `find:`/`replace:`
-  for your own pseudonyms.
+  for your own pseudonyms. Generate this list from a names file with `gen_keywords.py` (below).
+- `decode_nested_json` — decode double-encoded JSON string values (rich-text "delta" blobs)
+  so the analyzer reads clean text instead of NER-tagging markup (default `true`).
 - `include_extensions` — allowlist of types to process; override per run with `--include .md,.txt`.
 - `skip_extensions` — types ignored entirely (default: `.pdf .mp4 .mov .m4v`).
 - `copy_unhandled` — mirror unhandled types into `redacted/` (default `false`).
+
+## Generating `custom_keywords` from a names list
+
+`gen_keywords.py` turns a plain names file into ready-to-paste `custom_keywords` YAML, so you
+don't hand-number pseudonyms. Input: `# PREFIX` group headers, one person per line;
+comma-separated names on a line are **aliases of one person** and share that person's code.
+
+```
+# ENG
+Mary Bello, Mary
+John Smith
+
+# MGR
+Jane Doe
+```
+```bash
+python gen_keywords.py names.md      # prints YAML to stdout; paste under custom_keywords:
+```
+Numbers reset per group, zero-padded two-digit; aliases share one code:
+```yaml
+  - find: "Mary Bello"
+    replace: "ENG01"
+  - find: "Mary"
+    replace: "ENG01"
+  - find: "John Smith"
+    replace: "ENG02"
+  - find: "Jane Doe"
+    replace: "MGR01"
+```
+Comma is the alias delimiter (so a name *containing* a comma is read as two aliases).
+Duplicate finds get a stderr warning. Keep your names file out of git if it holds real names.
 
 ## After a run
 

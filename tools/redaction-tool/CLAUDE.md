@@ -9,12 +9,33 @@ Two find modes (set via `entities` in config):
   loads only when an image/PDF is present, for OCR matching). Stdlib-fast,
   auditable. Engine: `keyword_redactor.py` (no deps).
 - **NER** (`entities` non-empty) — spaCy/Presidio detects names/orgs/etc.
+  Add `URL` to `entities` to redact http(s) URLs to `[URL]` (a blanket
+  `(?i)https?://\S+` recognizer; opt-in, off unless `URL` is listed).
 
 Plus a discovery mode: **`--scan`** lists candidate identities (NER) by entity
 type, writing nothing — to seed `custom_keywords` before redacting.
 
+Nested JSON: `decode_nested_json: true` (default) decodes string values that are
+themselves JSON — double-encoded blobs like rich-text "delta" exports
+(`{"richText": "[{\"text\":\"…\"}]"}`) — redacts the inner text, then re-encodes,
+so NER reads clean prose instead of tagging JSON markup as bogus entities. Fully
+generic (recurses any nesting depth; no field names assumed).
+
 Modules: `redact.py` (CLI + handlers), `keyword_redactor.py` (stdlib keyword
-engine), `report_format.py` (stdlib count + scan reports).
+engine), `report_format.py` (stdlib count + scan reports), `gen_keywords.py`
+(stdlib helper: a names list → `custom_keywords` YAML).
+
+## Config files
+
+`config.yaml` is **gitignored** — it holds your real redaction terms (PII).
+`demo.config.yaml` is the committed, clean template. First use:
+
+```bash
+cp demo.config.yaml config.yaml      # then edit config.yaml with your real terms
+```
+
+The tool defaults to `config.yaml`, so `python redact.py <dir>` uses your local
+(gitignored) config automatically — no `--config` needed.
 
 ## Commands
 
@@ -28,19 +49,21 @@ python3.11 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt                  # click is pinned in requirements
 python -m spacy download en_core_web_lg
 
+cp demo.config.yaml config.yaml                   # first run: make your local config
 python redact.py <dir> --dry-run                 # preview (no files written)
 python redact.py <dir>                            # redact → <dir>/redacted/
 python redact.py <dir> --scan                     # discover identities (no writes)
 python redact.py <dir> --include .md,.txt         # process only these types this run
+python gen_keywords.py names.md                   # names list → custom_keywords YAML (stdout)
 ```
 
 ## Tests
 
 ```bash
-.venv/bin/python -m unittest discover -s tests    # 54 tests (under the venv)
+.venv/bin/python -m unittest discover -s tests    # full suite (under the venv)
 ```
-Stdlib-only modules (`keyword_redactor`, `report_format`, scan/leak-guard logic)
-also run under system `python3`.
+Stdlib-only modules (`keyword_redactor`, `report_format`, `gen_keywords`,
+scan/leak-guard logic) also run under system `python3`.
 
 ## Gotchas
 
@@ -49,9 +72,12 @@ also run under system `python3`.
 - `custom_keywords` matching is CASE-INSENSITIVE, word-boundary
 - Apple Vision OCR (macOS) >> Tesseract; check setup output for which is active
 - `include_extensions` is an enforced allowlist (only listed + handled types are processed); `--include .md,.txt` overrides it per run; `skip_extensions` is checked first
+- `URL` entity (add to `entities`) → http(s) URLs redacted to `[URL]`
+- Per-pseudonym count report only prints in keyword-only mode (`entities: []`)
 
 ## Config
 
-`config.yaml` controls: `entities`, `custom_keywords` (find→replace overrides),
-`replacement` char, `spacy_model`, `output_dir`, `copy_unhandled` (leak guard),
+`config.yaml` controls: `entities` (incl. `URL`), `custom_keywords` (find→replace
+overrides), `replacement` char, `spacy_model`, `output_dir`, `copy_unhandled`
+(leak guard), `decode_nested_json` (decode double-encoded JSON values),
 `skip_extensions`, OCR settings.
