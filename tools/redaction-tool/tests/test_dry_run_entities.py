@@ -138,6 +138,11 @@ class TestKeywordOnlyModeUnified(unittest.TestCase):
         self.assertIn("[X]", out)
         self.assertIn("×2", out)                 # matched twice
         self.assertIn("GRAND TOTAL: 2", out)
+        # No entity types configured → PATTERN MATCHES and MODEL ENTITIES are N/A
+        # (mechanism not engaged), not `none`. Blackout has no plain keywords → N/A.
+        self.assertIn("no regex entity types configured", out)
+        self.assertIn("no NER types configured", out)
+        self.assertIn("no plain keywords configured", out)
 
 
 if __name__ == "__main__":

@@ -223,6 +223,60 @@ class TestRenderReport(unittest.TestCase):
         self.assertEqual(body(dry), body(real))
 
 
+# ── N/A (not engaged) vs none (engaged, empty), with ← reason annotations ───────
+
+class TestEngagedStates(unittest.TestCase):
+    def _render(self, entity_tally, keyword_tally, engaged):
+        rep = build_redaction_report(
+            entity_tally, keyword_tally, replacement_char="█████",
+            entity_replacements={"URL": "[URL]"}, engaged=engaged)
+        return render_redaction_report(rep, title="T", files_scanned=1, files_matched=1)
+
+    def _seg(self, out, start, end):
+        return out[out.index(start):out.index(end)]
+
+    def test_na_when_subsection_not_engaged(self):
+        out = self._render(
+            {"EMAIL_ADDRESS": {"a@x.com": 1}}, [],
+            engaged={"pattern": True, "model": False, "blackout": False, "replaced": False})
+        model = self._seg(out, "MODEL ENTITIES", "CUSTOM KEYWORDS — blacked out")
+        self.assertIn("N/A", model)
+        self.assertNotIn("none", model)
+        blk = self._seg(out, "CUSTOM KEYWORDS — blacked out", "CUSTOM KEYWORDS — replaced")
+        self.assertIn("N/A", blk)
+
+    def test_none_when_engaged_but_empty(self):
+        out = self._render(
+            {"EMAIL_ADDRESS": {"a@x.com": 1}}, [],
+            engaged={"pattern": True, "model": True, "blackout": True, "replaced": True})
+        model = self._seg(out, "MODEL ENTITIES", "CUSTOM KEYWORDS — blacked out")
+        self.assertIn("none", model)
+        self.assertNotIn("N/A", model)
+
+    def test_reason_annotations_present(self):
+        out = self._render(
+            {}, [],
+            engaged={"pattern": False, "model": False, "blackout": False, "replaced": False})
+        self.assertIn("←", out)
+        self.assertIn("no regex entity types configured", out)
+        self.assertIn("no NER types configured", out)
+        self.assertIn("no plain keywords configured", out)
+        self.assertIn("no pseudonym keywords configured", out)
+
+    def test_engaged_empty_reason_differs_from_na_reason(self):
+        out = self._render(
+            {}, [], engaged={"pattern": True, "model": True, "blackout": True, "replaced": True})
+        self.assertIn("active, no matches", out)   # engaged-but-empty wording
+        self.assertNotIn("N/A", out)
+
+    def test_default_engaged_is_all_true(self):
+        """No engaged passed → empty subsections render 'none', never 'N/A' (back-compat)."""
+        rep = build_redaction_report({}, [], replacement_char="█████")
+        out = render_redaction_report(rep, title="T", files_scanned=1, files_matched=1)
+        self.assertIn("none", out)
+        self.assertNotIn("N/A", out)
+
+
 # ── assemble_report_inputs: collector + kr.counts → builder inputs ──────────────
 
 class TestAssembleReportInputs(unittest.TestCase):

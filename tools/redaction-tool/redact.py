@@ -954,7 +954,8 @@ def run(input_dir: Path, cfg: dict, dry_run: bool) -> int:
     # image/PDF matches) merged with keyword_redactor's per-find counts (keyword-only
     # text). Matched text is printed (audit visibility) — same exposure as --scan.
     from report_format import (
-        assemble_report_inputs, build_redaction_report, render_redaction_report)
+        assemble_report_inputs, build_redaction_report, render_redaction_report,
+        entity_engine)
     keywords = normalize_keywords(cfg)
     kr_counts = kr.counts if kr is not None else None
     entity_tally, keyword_tally = assemble_report_inputs(
@@ -962,9 +963,19 @@ def run(input_dir: Path, cfg: dict, dry_run: bool) -> int:
     # Per-entity replacement tokens (e.g. URL → [URL]); KW_* are reported separately.
     entity_repls = {k: v for k, v in (kw_replacements or {}).items()
                     if not k.startswith("KW_") and v is not None}
+    # Which subsections' detection ran this config → empty renders `none` (engaged) vs
+    # `N/A` (not engaged). NER mode loads the model whenever any NER type is configured.
+    configured = cfg.get("entities", []) or []
+    engaged = {
+        "pattern": any(entity_engine(t) == "regex" for t in configured),
+        "model": any(entity_engine(t) == "NER" for t in configured),
+        "blackout": any(k["replace"] is None for k in keywords),
+        "replaced": any(k["replace"] is not None for k in keywords),
+    }
     rep = build_redaction_report(
         entity_tally, keyword_tally,
-        replacement_char=cfg["replacement"], entity_replacements=entity_repls)
+        replacement_char=cfg["replacement"], entity_replacements=entity_repls,
+        engaged=engaged)
     files_scanned = (stats["md"] + stats["txt"] + stats["html"] + stats["json"]
                      + stats["csv"] + stats["pdf"] + stats["img"])
     report_text = render_redaction_report(

@@ -137,7 +137,7 @@ def _rows_by_count_desc(counts) -> list:
 
 def build_redaction_report(entity_tally, keyword_tally, *,
                            replacement_char="█████",
-                           entity_replacements=None) -> dict:
+                           entity_replacements=None, engaged=None) -> dict:
     """Build the structured end-of-run report from a tally (no model needed).
 
     entity_tally:  {entity_type: {matched_text: count}} — non-keyword entities.
@@ -146,8 +146,16 @@ def build_redaction_report(entity_tally, keyword_tally, *,
     replacement_char: default blackout display token (e.g. "█████").
     entity_replacements: per-type token overrides, e.g. {"URL": "[URL]"};
                    any type not present falls back to replacement_char.
+    engaged: {"pattern"/"model"/"blackout"/"replaced": bool} — whether each
+                   subsection's detection mechanism ran this configuration. An EMPTY
+                   subsection renders `none` when engaged (ran, matched nothing) vs
+                   `N/A` when not engaged (nothing of that kind configured). Defaults
+                   to all True (so empty → none) when not supplied.
     """
     entity_replacements = entity_replacements or {}
+    engaged = engaged or {}
+    engaged = {k: engaged.get(k, True)
+               for k in ("pattern", "model", "blackout", "replaced")}
 
     pattern_matches, model_entities = [], []
     for etype in sorted(entity_tally):
@@ -202,6 +210,7 @@ def build_redaction_report(entity_tally, keyword_tally, *,
         "keywords_blackout": keywords_blackout,
         "keywords_replaced": keywords_replaced,
         "grand_total": grand_total,
+        "engaged": engaged,
     }
 
 
@@ -248,10 +257,27 @@ _THIN = "─" * 48
 _TOTAL_RULE = "─" * 50
 
 
+# Per-subsection reason text for the two empty states: (N/A reason, none reason).
+# N/A = mechanism not engaged this run; none = engaged but matched nothing.
+_REASONS = {
+    "pattern":  ("no regex entity types configured", "regex active, no matches"),
+    "model":    ("no NER types configured",          "NER active, no matches"),
+    "blackout": ("no plain keywords configured",     "plain keywords active, no matches"),
+    "replaced": ("no pseudonym keywords configured", "pseudonym keywords active, no matches"),
+}
+
+
+def _render_empty(lines, engaged_map, key) -> None:
+    """Render an empty subsection as `none` (engaged, no matches) or `N/A` (not
+    engaged), each with a `← <reason>` annotation."""
+    na_reason, none_reason = _REASONS[key]
+    if engaged_map.get(key, True):
+        lines.append(f"    none   ← {none_reason}")
+    else:
+        lines.append(f"    N/A    ← {na_reason}")
+
+
 def _render_entity_blocks(lines, blocks) -> None:
-    if not blocks:
-        lines.append("    none")
-        return
     for b in blocks:
         head = f"{b['entity_type'].ljust(14)} ({b['unique']} unique · {b['hits']} hits)"
         lines.append(f"{head.ljust(48)} → {b['replacement']}")
@@ -260,9 +286,6 @@ def _render_entity_blocks(lines, blocks) -> None:
 
 
 def _render_blackout(lines, block) -> None:
-    if not block["rows"]:
-        lines.append("    none")
-        return
     head = f"{''.ljust(14)} ({block['unique']} unique · {block['hits']} hits)"
     lines.append(f"{head.ljust(48)} → {block['replacement']}")
     for row in block["rows"]:
@@ -270,9 +293,6 @@ def _render_blackout(lines, block) -> None:
 
 
 def _render_replaced(lines, groups) -> None:
-    if not groups:
-        lines.append("    none")
-        return
     for g in groups:
         word = "alias" if g["aliases"] == 1 else "aliases"
         lines.append(
@@ -299,24 +319,38 @@ def render_redaction_report(report, *, title, files_scanned, files_matched,
     lines.append(_RULE)
     lines.append("")
 
+    eng = report.get("engaged", {})
+
     lines.append("PATTERN MATCHES  (regex — deterministic)")
     lines.append(_THIN)
-    _render_entity_blocks(lines, report["pattern_matches"])
+    if report["pattern_matches"]:
+        _render_entity_blocks(lines, report["pattern_matches"])
+    else:
+        _render_empty(lines, eng, "pattern")
     lines.append("")
 
     lines.append("MODEL ENTITIES  (spaCy NER — probabilistic)")
     lines.append(_THIN)
-    _render_entity_blocks(lines, report["model_entities"])
+    if report["model_entities"]:
+        _render_entity_blocks(lines, report["model_entities"])
+    else:
+        _render_empty(lines, eng, "model")
     lines.append("")
 
     lines.append("CUSTOM KEYWORDS — blacked out")
     lines.append(_THIN)
-    _render_blackout(lines, report["keywords_blackout"])
+    if report["keywords_blackout"]["rows"]:
+        _render_blackout(lines, report["keywords_blackout"])
+    else:
+        _render_empty(lines, eng, "blackout")
     lines.append("")
 
     lines.append("CUSTOM KEYWORDS — replaced")
     lines.append(_THIN)
-    _render_replaced(lines, report["keywords_replaced"])
+    if report["keywords_replaced"]:
+        _render_replaced(lines, report["keywords_replaced"])
+    else:
+        _render_empty(lines, eng, "replaced")
     lines.append("")
 
     lines.append(_TOTAL_RULE)
