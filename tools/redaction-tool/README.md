@@ -16,13 +16,12 @@
 > and see unexpected behavior, disable the filter by commenting out the `_NoMappingFilter` block
 > in `build_analyzer()`.
 >
-> **Reading the report:** the per-keyword `blackout` column (image/PDF redaction counts) is one of:
-
-| `blackout` shows | meaning |
-|---|---|
-| `N/A` | no images/PDFs were processed — not applicable to this run |
-| `0` | images/PDFs were processed, but this keyword wasn't matched in them |
-| `N` (a count) | the keyword was blacked out N times in images/PDFs |
+> **Reading the report:** every run ends with the same itemized report — `--dry-run` and a
+> real run print identical bodies (the real run adds an `Output at:` line). Matches are grouped
+> into **PATTERN MATCHES** (regex: emails, URLs, …), **MODEL ENTITIES** (spaCy NER: names,
+> orgs, …), and **CUSTOM KEYWORDS** (blacked out vs. replaced), with per-group subtotals and a
+> grand total. An empty category shows `none` (ran, matched nothing) or `N/A` (not engaged this
+> run) with a `← reason`. The report lists matched text, so treat it as sensitive.
 
 A fully local, air-gapped PII redaction tool. Point it at a folder of files; it writes a
 redacted copy with names, emails, phone numbers, and other sensitive data removed. No
@@ -88,9 +87,10 @@ python redact.py <folder> --dry-run  # 1. preview: reports what WOULD change, wr
 python redact.py <folder>            # 2. redact for real: writes to <folder>/redacted/
 ```
 
-The dry-run report shows totals, per-file-type counts, and per-keyword hit counts. After a
-real run, **open `<folder>/redacted/` and review it yourself** before sharing — recall isn't
-guaranteed (see the caveat).
+Both `--dry-run` and a real run print the same itemized report — totals, per-file-type counts,
+and the grouped breakdown of every match (see *After a run*). After a real run, **open
+`<folder>/redacted/` and review it yourself** before sharing — recall isn't guaranteed (see the
+caveat).
 
 **Optional — discover terms first.** `--scan` lists candidate names/orgs it detects, but
 **writes nothing and changes no config**:
@@ -238,14 +238,14 @@ Duplicate finds get a stderr warning. Keep your names file out of git if it hold
 
 ```
 ────────────────────────────────────────────────────
-  Total redactions : 142
-  Markdown files   : 38
-  HTML files       : 12
+  Total redactions : 15
+  Markdown files   : 4
+  HTML files       : 2
   JSON files       : 4
   CSV files        : 2
   PDF files        : 0
   Image files      : 0
-  Copied unchanged : 201
+  Copied unchanged : 0
   Not copied (unhandled) : 3
   Skipped entirely : 5
   Errors           : 0
@@ -255,15 +255,52 @@ Duplicate finds get a stderr warning. Keep your names file out of git if it hold
     not copied: archive.zip
     not copied: scans/old.tiff
     not copied: notes.xlsx
-
-  Per-pseudonym counts (text-sub | blackout):
-    [CLIENT-A]  (Acme Corp)  text-sub: 12  blackout: N/A
-      └─ [CLIENT-A] subtotal  text-sub: 12  blackout: N/A
-    J.S.  (John Smith)  text-sub: 7  blackout: N/A
-      └─ J.S. subtotal  text-sub: 7  blackout: N/A
-  Total text-subs : 19
-  Total blackouts : N/A
 ```
+
+...followed by the itemized report (the SAME report `--dry-run` prints, minus the
+`Output at:` line):
+
+```
+══════════════════════════════════════════════════════════════════
+  REDACTION COMPLETE
+  Output at: /path/to/folder/redacted
+  Extensions scanned: .csv, .html, .json, .md        12 files scanned · 6 with matches
+══════════════════════════════════════════════════════════════════
+
+PATTERN MATCHES  (regex — deterministic)
+────────────────────────────────────────────────
+EMAIL_ADDRESS  (2 unique · 5 hits)               → █████
+    jane.doe@example.com         ×3
+    support@acme.test            ×2
+URL            (1 unique · 2 hits)               → [URL]
+    https://acme.test/dashboard  ×2
+
+MODEL ENTITIES  (spaCy NER — probabilistic)
+────────────────────────────────────────────────
+    none   ← NER active, no matches
+
+CUSTOM KEYWORDS — blacked out
+────────────────────────────────────────────────
+    N/A    ← no plain keywords configured
+
+CUSTOM KEYWORDS — replaced
+────────────────────────────────────────────────
+[CLIENT-A]     (2 aliases · 8 hits)
+    Acme Corp                    ×6
+    Acme                         ×2
+
+──────────────────────────────────────────────────
+  GRAND TOTAL: 15 redactions across 6 files
+══════════════════════════════════════════════════════════════════
+```
+
+Each subsection always prints. When it has no rows it shows one of two states, with a
+`← reason` note: **`none`** = the detection ran but matched nothing, or **`N/A`** = that
+detection wasn't engaged this run (nothing of that kind was configured — e.g. no NER types, so
+`MODEL ENTITIES` is `N/A`; no plain keywords, so blacked-out is `N/A`). `PATTERN MATCHES` are
+regex recognizers, `MODEL ENTITIES` are spaCy NER, and custom keywords split by configured intent
+(plain → blacked out; `find→replace` → the pseudonym, aliases grouped under it). `GRAND TOTAL`
+equals `Total redactions`.
 
 ## Privacy
 

@@ -22,7 +22,7 @@ so NER reads clean prose instead of tagging JSON markup as bogus entities. Fully
 generic (recurses any nesting depth; no field names assumed).
 
 Modules: `redact.py` (CLI + handlers), `keyword_redactor.py` (stdlib keyword
-engine), `report_format.py` (stdlib count + scan reports), `gen_keywords.py`
+engine), `report_format.py` (stdlib unified end-of-run report + scan report), `gen_keywords.py`
 (stdlib helper: a names list → `custom_keywords` YAML).
 
 ## Config files
@@ -73,7 +73,7 @@ scan/leak-guard logic) also run under system `python3`.
 - Apple Vision OCR (macOS) >> Tesseract; check setup output for which is active
 - `include_extensions` is an enforced allowlist (only listed + handled types are processed); `--include .md,.txt` overrides it per run; `skip_extensions` is checked first
 - `URL` entity (add to `entities`) → http(s) URLs redacted to `[URL]`
-- Per-pseudonym count report only prints in keyword-only mode (`entities: []`)
+- Every run (dry-run AND real) prints the SAME unified report — PATTERN MATCHES (regex) / MODEL ENTITIES (NER) / CUSTOM KEYWORDS (blacked out vs replaced), per-group subtotals + grand total; the real run adds an `Output at:` line. Itemizes text and image/PDF matches alike
 
 ## Config
 
