@@ -53,6 +53,7 @@ DEFAULT_CONFIG: dict = {
     "copy_unhandled": False,     # leak guard: don't copy unhandled file types into redacted/
     "decode_nested_json": True,  # JSON string values that are themselves JSON (double-encoded
                                  # blobs, e.g. rich-text deltas) → decode, redact inner text, re-encode
+    "regex_only": False,         # skip spaCy model; match only regex entities (EMAIL/URL/…) + keywords
     "include_extensions": [          # allowlist of types to process (handled set)
         ".md", ".txt", ".html", ".htm", ".json", ".csv",
         ".pdf",
@@ -262,6 +263,91 @@ def build_analyzer(cfg: dict) -> tuple:
         log.info("URL redaction enabled — http(s) URLs will be replaced with [URL].")
 
     return analyzer, kw_replacements
+
+
+class _RegexAnalyzer:
+    """Drop-in for AnalyzerEngine that runs only pattern-based recognizers (no spaCy).
+    Used when regex_only: true — fast, deterministic, no NER."""
+
+    def __init__(self, recognizers: list):
+        self._recognizers = recognizers
+
+    def analyze(self, text: str, entities, language: str = "en") -> list:
+        if not text or not text.strip():
+            return []
+        entity_set = set(entities)
+        results = []
+        for rec in self._recognizers:
+            overlap = entity_set & set(rec.supported_entities)
+            if overlap:
+                results.extend(rec.analyze(text, list(overlap)))
+        return results
+
+
+def build_regex_analyzer(cfg: dict) -> tuple:
+    """Build a no-model regex-only analyzer — same interface as build_analyzer().
+
+    Loads Presidio PatternRecognizer subclasses directly (no NlpEngine / spaCy).
+    Handles EMAIL_ADDRESS, URL, PHONE_NUMBER, and other regex entity types plus
+    custom keywords as pattern recognizers. NER types (PERSON, ORGANIZATION, …)
+    are silently skipped — MODEL ENTITIES → N/A in the report.
+    Use when regex_only: true in config.
+    """
+    from presidio_analyzer import PatternRecognizer, Pattern
+    from presidio_analyzer.predefined_recognizers import (
+        CreditCardRecognizer, CryptoRecognizer, EmailRecognizer,
+        IbanRecognizer, IpRecognizer, MedicalLicenseRecognizer,
+        PhoneRecognizer, UsBankRecognizer, UsItinRecognizer,
+        UsLicenseRecognizer, UsPassportRecognizer, UsSsnRecognizer,
+    )
+
+    _PATTERN_RECOGNIZERS = {
+        "EMAIL_ADDRESS": EmailRecognizer,
+        "PHONE_NUMBER": PhoneRecognizer,
+        "CREDIT_CARD": CreditCardRecognizer,
+        "CRYPTO": CryptoRecognizer,
+        "IBAN_CODE": IbanRecognizer,
+        "IP_ADDRESS": IpRecognizer,
+        "US_SSN": UsSsnRecognizer,
+        "US_BANK_NUMBER": UsBankRecognizer,
+        "US_DRIVER_LICENSE": UsLicenseRecognizer,
+        "US_ITIN": UsItinRecognizer,
+        "US_PASSPORT": UsPassportRecognizer,
+        "MEDICAL_LICENSE": MedicalLicenseRecognizer,
+    }
+
+    entities = set(cfg.get("entities", []))
+    recognizers = []
+    for ent_type, cls in _PATTERN_RECOGNIZERS.items():
+        if ent_type in entities:
+            recognizers.append(cls())
+
+    kw_replacements: dict[str, Optional[str]] = {}
+    keywords = normalize_keywords(cfg)
+    for i, kw in enumerate(keywords):
+        entity_type = f"KW_{i}"
+        pattern = Pattern(
+            name=f"kw_{i}",
+            regex=r"(?i)\b" + re.escape(kw["find"]) + r"\b",
+            score=0.95,
+        )
+        recognizers.append(PatternRecognizer(supported_entity=entity_type, patterns=[pattern]))
+        kw_replacements[entity_type] = kw["replace"]
+
+    if keywords:
+        n_mapped = sum(1 for k in keywords if k["replace"] is not None)
+        log.info(
+            f"Loaded {len(keywords)} custom keyword(s) "
+            f"({n_mapped} with custom replacement, {len(keywords) - n_mapped} using default)"
+        )
+
+    if "URL" in entities:
+        pattern = Pattern(name="url", regex=URL_REGEX, score=0.9)
+        recognizers.append(PatternRecognizer(supported_entity="URL", patterns=[pattern]))
+        kw_replacements["URL"] = "[URL]"
+        log.info("URL redaction enabled — http(s) URLs will be replaced with [URL].")
+
+    return _RegexAnalyzer(recognizers), kw_replacements
 
 
 def get_entities(cfg: dict, kw_replacements: dict) -> list:
@@ -828,8 +914,12 @@ def run(input_dir: Path, cfg: dict, dry_run: bool) -> int:
             "Install Tesseract (brew install tesseract) or run on macOS with Apple Vision."
         )
         sys.exit(1)
+    regex_only = bool(cfg.get("regex_only", False))
     kr = make_keyword_redactor_from_config(cfg) if keyword_only else None
-    if (not keyword_only) or has_binary:
+    if regex_only:
+        analyzer, kw_replacements = build_regex_analyzer(cfg)
+        log.info("Regex-only mode — spaCy model skipped, NER entities disabled.")
+    elif (not keyword_only) or has_binary:
         log.info(f"Loading NLP model '{cfg.get('spacy_model', 'en_core_web_lg')}' "
                  f"(first run may take ~30s)…")
         analyzer, kw_replacements = build_analyzer(cfg)
@@ -968,7 +1058,7 @@ def run(input_dir: Path, cfg: dict, dry_run: bool) -> int:
     configured = cfg.get("entities", []) or []
     engaged = {
         "pattern": any(entity_engine(t) == "regex" for t in configured),
-        "model": any(entity_engine(t) == "NER" for t in configured),
+        "model": not regex_only and any(entity_engine(t) == "NER" for t in configured),
         "blackout": any(k["replace"] is None for k in keywords),
         "replaced": any(k["replace"] is not None for k in keywords),
     }

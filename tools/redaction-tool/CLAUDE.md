@@ -3,14 +3,19 @@
 Local, air-gapped PII redaction CLI. No network calls at runtime. Handles
 text (`.md .txt .html .json .csv`) and binary (`.pdf` + images) formats.
 
-Two find modes (set via `entities` in config):
+Three find modes (set via `entities` + `regex_only` in config):
 - **Keyword-only** (`entities: []`) — deterministic find→replace from
   `custom_keywords`, **no spaCy model loaded for text-only input** (the model
   loads only when an image/PDF is present, for OCR matching). Stdlib-fast,
   auditable. Engine: `keyword_redactor.py` (no deps).
-- **NER** (`entities` non-empty) — spaCy/Presidio detects names/orgs/etc.
-  Add `URL` to `entities` to redact http(s) URLs to `[URL]` (a blanket
-  `(?i)https?://\S+` recognizer; opt-in, off unless `URL` is listed).
+- **Regex-only** (`regex_only: true`) — skips the spaCy model entirely; matches
+  only regex-based entity types (EMAIL_ADDRESS, URL, PHONE_NUMBER, CREDIT_CARD, …)
+  + custom keywords via Presidio `PatternRecognizer` subclasses directly. NER types
+  (PERSON, ORGANIZATION, …) are silently skipped → MODEL ENTITIES shows N/A. Fast,
+  deterministic — cuts large-JSON runs from minutes to seconds.
+- **NER** (`entities` non-empty, `regex_only: false`) — spaCy/Presidio detects
+  names/orgs/etc. Add `URL` to `entities` to redact http(s) URLs to `[URL]` (a
+  blanket `(?i)https?://\S+` recognizer; opt-in, off unless `URL` is listed).
 
 Plus a discovery mode: **`--scan`** lists candidate identities (NER) by entity
 type, writing nothing — to seed `custom_keywords` before redacting.
@@ -80,4 +85,5 @@ scan/leak-guard logic) also run under system `python3`.
 `config.yaml` controls: `entities` (incl. `URL`), `custom_keywords` (find→replace
 overrides), `replacement` char, `spacy_model`, `output_dir`, `copy_unhandled`
 (leak guard), `decode_nested_json` (decode double-encoded JSON values),
-`skip_extensions`, OCR settings.
+`regex_only` (skip spaCy; regex entities + keywords only), `skip_extensions`,
+OCR settings.

@@ -73,6 +73,15 @@ copy_unhandled: false
 # strings as opaque text (e.g. if you have prose that is coincidentally valid JSON).
 decode_nested_json: true
 
+# Regex-only mode. When true, the ~750 MB spaCy model is skipped entirely —
+# only regex-based entity types (EMAIL_ADDRESS, URL, PHONE_NUMBER, CREDIT_CARD, …)
+# and custom_keywords are matched. PERSON, ORGANIZATION, LOCATION, and other NER
+# types are ignored even if listed in `entities` above (MODEL ENTITIES → N/A in
+# the report). Use this for large JSON/text files where only emails, URLs, or
+# known keywords need redaction — cuts runtime from minutes to seconds.
+# NER types require regex_only: false (the default).
+regex_only: false
+
 # File types to exclude entirely — not processed, not copied to redacted/.
 # Useful for binary formats that can't be text-redacted (video, audio)
 # or types you want to keep out of downstream tools altogether.
