@@ -4,3 +4,6 @@ config.yaml
 
 # Local design-decision record — a working doc, not a shipped artifact.
 decisions.md
+
+# Names input for gen_keywords.py (real names → pseudonyms) — PII, never publish.
+names.md
