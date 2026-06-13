@@ -219,6 +219,35 @@ Numbers reset per group, zero-padded two-digit; aliases share one code:
 ```
 Comma is the alias delimiter (so a name *containing* a comma is read as two aliases). Duplicate finds get a stderr warning. Keep your names file out of git if it holds real names.
 
+**Blackout terms (no pseudonym).** A reserved `# BLACKOUT` group (case-insensitive) emits **plain** blackout strings instead of codes — and inside it, **commas separate independent terms** (not aliases), so you can list many per line:
+
+```
+# BLACKOUT
+First Ave, Second Ave, Third Ave
+Old Town Library
+```
+```yaml
+  - "First Ave"
+  - "Second Ave"
+  - "Third Ave"
+  - "Old Town Library"
+```
+So one `names.md` can drive both your pseudonym groups *and* your blackout list — the blackout entries map to the default `█████`.
+
+**Write straight into `config.yaml` (no copy/paste/hunt).** Add two marker lines once, under `custom_keywords:`:
+
+```yaml
+custom_keywords:
+  # >>> gen_keywords:begin — managed by gen_keywords.py --write >>>
+  # <<< gen_keywords:end <<<
+```
+Then `--write` regenerates the block in place — only the lines *between* the markers are replaced; everything else in the file is left untouched:
+
+```bash
+python gen_keywords.py names.md --write config.yaml
+```
+It backs up to `config.yaml.bak`, re-validates that the result still parses as YAML, and replaces atomically. If the markers are missing it refuses and tells you to add them (never guesses where to write). Keep any hand-added terms *outside* the markers — or put them in a `# BLACKOUT` group so `names.md` is the single source of truth.
+
 ## After a run
 
 > **Reading the report:** every run ends with the same itemized report — `--dry-run` and a real run print identical bodies (the real run adds an `Output at:` line). Matches are grouped into **PATTERN MATCHES** (regex: emails, URLs, …), **MODEL ENTITIES** (spaCy NER: names, orgs, …), and **CUSTOM KEYWORDS** (blacked out vs. replaced), with per-group subtotals and a grand total. An empty category shows `none` (ran, matched nothing) or `N/A` (not engaged this run) with a `← reason`. The report lists matched text, so treat it as sensitive.

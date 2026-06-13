@@ -75,5 +75,97 @@ class TestGenKeywords(unittest.TestCase):
         self.assertIn('- find: "John Smith"\n    replace: "ENG01"', out)   # still works
 
 
+class TestBlackoutGroup(unittest.TestCase):
+    """The reserved `# BLACKOUT` group emits PLAIN strings (-> █████), no codes.
+    Synthetic placeholders only (published file)."""
+
+    def test_blackout_emits_plain_string_no_code(self):
+        out, warns = fmt("# BLACKOUT\nMain Street Clinic\n")
+        self.assertIn('  - "Main Street Clinic"', out)   # plain string, 2-space indent
+        self.assertNotIn("find:", out)                   # no find/replace for blackout
+        self.assertNotIn("replace:", out)
+        self.assertEqual(warns, [])
+
+    def test_blackout_commas_are_separate_terms(self):
+        # Contrast with pseudonym groups: in BLACKOUT, comma = SEPARATE terms,
+        # not aliases-of-one (blackout has no code to share).
+        out, _ = fmt("# BLACKOUT\nFirst Ave, Second Ave, Third Ave\n")
+        self.assertIn('  - "First Ave"', out)
+        self.assertIn('  - "Second Ave"', out)
+        self.assertIn('  - "Third Ave"', out)
+        self.assertNotIn("replace:", out)
+
+    def test_blackout_header_case_insensitive(self):
+        out, _ = fmt("# blackout\nSomeplace Hall\n")
+        self.assertIn('  - "Someplace Hall"', out)
+
+    def test_blackout_multiple_lines(self):
+        out, _ = fmt("# BLACKOUT\nAlpha\nBeta, Gamma\n")
+        for term in ("Alpha", "Beta", "Gamma"):
+            self.assertIn(f'  - "{term}"', out)
+
+    def test_blackout_and_pseudonym_groups_coexist(self):
+        out, _ = fmt("# ENG\nMary Bello\n# BLACKOUT\nAcme Plaza, Beta Tower\n")
+        self.assertIn('  - find: "Mary Bello"\n    replace: "ENG01"', out)  # pseudonym intact
+        self.assertIn('  - "Acme Plaza"', out)                             # blackout plain
+        self.assertIn('  - "Beta Tower"', out)
+
+    def test_blackout_quote_escaping(self):
+        out, _ = fmt('# BLACKOUT\nThe "Spot"\n')
+        self.assertIn(r'  - "The \"Spot\""', out)   # JSON-style escaping (valid YAML)
+
+
+class TestSpliceIntoConfig(unittest.TestCase):
+    """`--write` core: replace the keyword block between managed markers in place.
+    Pure string-in/string-out; synthetic data only."""
+
+    BEGIN = "  # >>> gen_keywords:begin >>>"
+    END = "  # <<< gen_keywords:end <<<"
+
+    def _cfg(self, middle):
+        return ("custom_keywords:\n"
+                f"{self.BEGIN}\n"
+                f"{middle}\n"
+                f"{self.END}\n"
+                'replacement: "X"\n')
+
+    def test_replaces_between_markers(self):
+        new = gen_keywords.splice_into_config(self._cfg('  - "OLD"'), '  - "NEW"')
+        self.assertIn('  - "NEW"', new)
+        self.assertNotIn('"OLD"', new)
+
+    def test_preserves_surrounding_and_markers(self):
+        new = gen_keywords.splice_into_config(self._cfg('  - "OLD"'), '  - "NEW"')
+        self.assertTrue(new.startswith("custom_keywords:\n"))   # before-begin kept
+        self.assertIn('replacement: "X"', new)                   # after-end kept
+        self.assertIn("gen_keywords:begin", new)                 # markers retained
+        self.assertIn("gen_keywords:end", new)
+
+    def test_missing_markers_raises_valueerror(self):
+        with self.assertRaises(ValueError):
+            gen_keywords.splice_into_config('custom_keywords:\n  - "X"\n', '  - "NEW"')
+
+
+class TestUpdateConfigFile(unittest.TestCase):
+    """`--write` I/O wrapper: writes between markers, makes a .bak, atomic."""
+
+    def test_writes_between_markers_and_backs_up(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d) / "config.yaml"
+            p.write_text(
+                'custom_keywords:\n'
+                '  # >>> gen_keywords:begin >>>\n'
+                '  - "OLD"\n'
+                '  # <<< gen_keywords:end <<<\n'
+                'replacement: "X"\n', encoding="utf-8")
+            gen_keywords.update_config_file(str(p), '  - "NEW"')
+            txt = p.read_text(encoding="utf-8")
+            self.assertIn('  - "NEW"', txt)
+            self.assertNotIn('"OLD"', txt)
+            self.assertTrue((Path(d) / "config.yaml.bak").exists())   # backup made
+            self.assertIn('"OLD"', (Path(d) / "config.yaml.bak").read_text())  # .bak = original
+
+
 if __name__ == "__main__":
     unittest.main()

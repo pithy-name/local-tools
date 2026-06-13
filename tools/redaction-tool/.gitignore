@@ -5,5 +5,10 @@ config.yaml
 # Local design-decision record — a working doc, not a shipped artifact.
 decisions.md
 
-# Names input for gen_keywords.py (real names → pseudonyms) — PII, never publish.
+# Names input + derived files for gen_keywords.py (real names → pseudonyms) — PII, never publish.
 names.md
+names-dupes.txt
+
+# Backups + atomic-write temps (config.yaml.bak from --write, names.md.bak, *.tmp) — may hold PII.
+*.bak
+*.tmp
