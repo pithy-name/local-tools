@@ -2,8 +2,11 @@
 # Edit this file, then run: python redact.py /path/to/folder
 
 # Named entity types Presidio/spaCy will detect automatically.
-# Available types: PERSON, EMAIL_ADDRESS, PHONE_NUMBER, ORGANIZATION,
-#   LOCATION, US_SSN, CREDIT_CARD, IBAN_CODE, IP_ADDRESS, NRP (nationality/religion/politics)
+# Regex types (work with regex_only: true, no model): EMAIL_ADDRESS, URL,
+#   PHONE_NUMBER, CREDIT_CARD, CRYPTO, IBAN_CODE, IP_ADDRESS, US_SSN,
+#   US_BANK_NUMBER, US_DRIVER_LICENSE, US_ITIN, US_PASSPORT, MEDICAL_LICENSE.
+# NER types (need the model, regex_only: false): PERSON, ORGANIZATION,
+#   LOCATION, NRP (nationality/religion/politics).
 entities:
   - PERSON
   - EMAIL_ADDRESS
@@ -95,7 +98,7 @@ skip_extensions:
 # first (it wins). Override per run with `--include .md,.txt`.
 # An EMPTY list disables the allowlist (every handled type is processed).
 # Handled types: text — .md .html .htm .json .csv; binary — .pdf .png .jpg .jpeg .gif .webp.
-# (`.pdf` is also in skip_extensions above by default — remove it there to process PDFs.)
+# (`.pdf` is NOT skipped by default — PDFs are processed; add `.pdf` above to skip them.)
 include_extensions:
   - .md
   - .html
