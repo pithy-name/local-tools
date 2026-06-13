@@ -313,6 +313,8 @@ CUSTOM KEYWORDS — replaced
 
 Each subsection always prints. When it has no rows it shows one of two states, with a `← reason` note: **`none`** = the detection ran but matched nothing, or **`N/A`** = that detection wasn't engaged this run (nothing of that kind was configured — e.g. no NER types, so `MODEL ENTITIES` is `N/A`; no plain keywords, so blacked-out is `N/A`). `PATTERN MATCHES` are regex recognizers, `MODEL ENTITIES` are spaCy NER, and custom keywords split by configured intent (plain → blacked out; `find→replace` → the pseudonym, aliases grouped under it). `GRAND TOTAL` equals `Total redactions`.
 
+**Report files are never re-redacted.** redact.py ignores any `redaction-report*.md` in the input folder — they're never scanned or redacted, so a report saved beside your originals won't be pulled into `redacted/` (which would otherwise inflate counts once `.md` is an included type). The report is printed fresh to the console each run; if you save it as `redaction-report.md`, keep a single current copy per folder — to preserve history, rename or move older copies and the tool leaves them untouched.
+
 ## Privacy
 
 No network requests at runtime — the model and OCR run locally. Safe on air-gapped machines or data that can't leave your environment.

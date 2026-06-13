@@ -95,6 +95,17 @@ def _normalize_extensions(items) -> list:
     return out
 
 
+# redact.py reserves `redaction-report*.md` for its own end-of-run report (written
+# next to the input). A run must never scan/redact those — else a prior report gets
+# re-redacted into redacted/, inflating counts (matters now that .md can be included).
+_REPORT_RE = re.compile(r"(?i)^redaction-report.*\.md$")
+
+
+def _is_report_file(name: str) -> bool:
+    """True for the tool's own report files (redaction-report*.md, any -N version)."""
+    return bool(_REPORT_RE.match(name))
+
+
 # ── Import checks ─────────────────────────────────────────────────────────────
 
 def check_imports() -> None:
@@ -887,7 +898,8 @@ def run(input_dir: Path, cfg: dict, dry_run: bool) -> int:
 
     # Collect all files first (excluding the output dir) so we can decide what to load.
     all_files = sorted(f for f in input_dir.rglob("*") if f.is_file())
-    files = [f for f in all_files if output_dir not in f.parents]
+    files = [f for f in all_files
+             if output_dir not in f.parents and not _is_report_file(f.name)]
 
     # Keyword-only mode (entities empty) redacts text via the stdlib keyword_redactor
     # and loads the spaCy model ONLY when a config-enabled image/PDF is present —
@@ -1146,7 +1158,8 @@ def scan(input_dir: Path, cfg: dict) -> None:
 
     output_dir = input_dir / cfg["output_dir"]
     files = [f for f in sorted(input_dir.rglob("*"))
-             if f.is_file() and output_dir not in f.parents]
+             if f.is_file() and output_dir not in f.parents
+             and not _is_report_file(f.name)]
     SCAN_EXTS = {".md", ".txt", ".json", ".csv", ".html", ".htm",
                  ".png", ".jpg", ".jpeg", ".gif", ".webp", ".pdf"}
 
