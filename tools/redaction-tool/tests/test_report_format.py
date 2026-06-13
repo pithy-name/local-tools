@@ -39,5 +39,39 @@ class TestRenderScanReport(unittest.TestCase):
         self.assertIn("No candidate", render_scan_report({}))
 
 
+class TestRenderMarkdownReport(unittest.TestCase):
+    """`--report` markdown: SENSITIVE banner + optional meta + Summary table +
+    the full itemized text report in a fence. Synthetic tally only."""
+
+    def _report(self):
+        from report_format import build_redaction_report
+        entity_tally = {"EMAIL_ADDRESS": {"a@b.test": 2}, "URL": {"http://x.test": 1}}
+        keyword_tally = [{"find": "Foo", "replace": None, "count": 3},
+                         {"find": "Bar", "replace": "ENG01", "count": 5}]
+        return build_redaction_report(entity_tally, keyword_tally,
+                                      entity_replacements={"URL": "[URL]"})
+
+    def test_structure_banner_table_and_fenced_itemized(self):
+        from report_format import render_markdown_report
+        md = render_markdown_report(self._report(), title="REDACTION COMPLETE",
+                                    files_scanned=2, files_matched=2)
+        self.assertIn("# REDACTION COMPLETE", md)        # H1
+        self.assertIn("SENSITIVE", md)                    # keep-local banner
+        self.assertIn("## Summary", md)
+        self.assertIn("| GRAND TOTAL |", md)              # summary table row
+        self.assertIn("PATTERN — EMAIL_ADDRESS", md)      # per-entity summary row
+        self.assertIn("Keywords — replaced", md)
+        self.assertIn("```", md)                          # fenced itemized block
+        self.assertIn("PATTERN MATCHES", md)              # the itemized text is embedded
+
+    def test_meta_bullets_included(self):
+        from report_format import render_markdown_report
+        md = render_markdown_report(self._report(), title="REDACTION COMPLETE",
+                                    files_scanned=1, files_matched=1,
+                                    meta=["Mode: regex-only", "entities: EMAIL_ADDRESS, URL"])
+        self.assertIn("- Mode: regex-only", md)
+        self.assertIn("- entities: EMAIL_ADDRESS, URL", md)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -302,3 +302,45 @@ def render_redaction_report(report, *, title, files_scanned, files_matched,
         f"across {files_matched} files")
     lines.append(_RULE)
     return "\n".join(lines)
+
+
+def render_markdown_report(report, *, title, files_scanned, files_matched,
+                           extensions=None, output_dir=None, meta=None) -> str:
+    """Render the report as a self-contained markdown doc (for `redact.py --report`):
+    a SENSITIVE keep-local banner, optional caller-supplied `meta` bullets (e.g.
+    mode/entities), a Summary table of subtotals from the report dict, and the full
+    itemized text report (render_redaction_report) inside a fenced block.
+
+    Pure — the markdown lives here (the rendering concern) so redact.py only calls
+    and writes it. Matched PII appears in the itemized block; callers keep it local.
+    """
+    itemized = render_redaction_report(
+        report, title=title, files_scanned=files_scanned,
+        files_matched=files_matched, extensions=extensions, output_dir=output_dir)
+
+    rows = ["| Metric | Value |", "|---|---|",
+            f"| Files scanned · with matches | {files_scanned} · {files_matched} |"]
+    for b in report.get("pattern_matches", []):
+        rows.append(f"| PATTERN — {b['entity_type']} | {b['unique']} unique · {b['hits']} hits |")
+    for b in report.get("model_entities", []):
+        rows.append(f"| MODEL — {b['entity_type']} | {b['unique']} unique · {b['hits']} hits |")
+    kb = report.get("keywords_blackout") or {"unique": 0, "hits": 0}
+    rows.append(f"| Keywords — blacked out | {kb['unique']} unique · {kb['hits']} hits |")
+    krep = report.get("keywords_replaced", [])
+    rows.append(f"| Keywords — replaced | {len(krep)} pseudonyms · "
+                f"{sum(g['hits'] for g in krep)} hits |")
+    rows.append(f"| GRAND TOTAL | {report.get('grand_total', 0)} |")
+
+    meta_block = ("\n".join(f"- {m}" for m in meta) + "\n\n") if meta else ""
+    return (
+        f"# {title}\n\n"
+        "> ⚠️ SENSITIVE — this report lists matched PII (emails, names, URLs). "
+        "Keep it local; do NOT commit it or place it inside `redacted/`.\n\n"
+        f"{meta_block}"
+        "## Summary\n\n"
+        + "\n".join(rows) + "\n\n"
+        "## Itemized (full report)\n\n"
+        "```\n"
+        f"{itemized}\n"
+        "```\n"
+    )

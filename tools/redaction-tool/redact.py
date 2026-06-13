@@ -884,7 +884,7 @@ def _merge_collector(dst: dict, src: dict) -> None:
             bucket[text] = bucket.get(text, 0) + count
 
 
-def run(input_dir: Path, cfg: dict, dry_run: bool) -> int:
+def run(input_dir: Path, cfg: dict, dry_run: bool, report_path: Optional[str] = None) -> int:
     """Process all files in input_dir. Returns the number of per-file errors."""
     output_dir = input_dir / cfg["output_dir"]
     if not dry_run:
@@ -1057,7 +1057,7 @@ def run(input_dir: Path, cfg: dict, dry_run: bool) -> int:
     # text). Matched text is printed (audit visibility) — same exposure as --scan.
     from report_format import (
         assemble_report_inputs, build_redaction_report, render_redaction_report,
-        entity_engine)
+        render_markdown_report, entity_engine)
     keywords = normalize_keywords(cfg)
     kr_counts = kr.counts if kr is not None else None
     entity_tally, keyword_tally = assemble_report_inputs(
@@ -1080,15 +1080,32 @@ def run(input_dir: Path, cfg: dict, dry_run: bool) -> int:
         engaged=engaged)
     files_scanned = (stats["md"] + stats["txt"] + stats["html"] + stats["json"]
                      + stats["csv"] + stats["pdf"] + stats["img"])
+    title = "REDACTION PREVIEW (--dry-run)" if dry_run else "REDACTION COMPLETE"
+    extensions = sorted(include_set) if include_set else None
     report_text = render_redaction_report(
-        rep,
-        title="REDACTION PREVIEW (--dry-run)" if dry_run else "REDACTION COMPLETE",
-        files_scanned=files_scanned,
-        files_matched=files_with_matches,
-        extensions=sorted(include_set) if include_set else None,
+        rep, title=title, files_scanned=files_scanned,
+        files_matched=files_with_matches, extensions=extensions,
         output_dir=None if dry_run else output_dir,
     )
     log.info("\n" + report_text)
+
+    # Opt-in (--report): persist the report as markdown next to the input. Off by
+    # default — the report itemizes matched PII. redact.py skips redaction-report*.md
+    # on later runs (see _is_report_file), so this file is never re-redacted.
+    if report_path is not None:
+        mode = ("regex-only (no model)" if regex_only
+                else "keyword-only" if keyword_only else "NER (spaCy model)")
+        meta = [f"Mode: {mode}",
+                f"entities: {cfg.get('entities') or '[]'}",
+                f"custom keywords loaded: {len(keywords)}"]
+        md = render_markdown_report(
+            rep, title=title, files_scanned=files_scanned,
+            files_matched=files_with_matches, extensions=extensions,
+            output_dir=None if dry_run else output_dir, meta=meta)
+        dest = (input_dir / "redaction-report.md" if report_path == ""
+                else Path(report_path).expanduser())
+        dest.write_text(md, encoding="utf-8")
+        log.info(f"  Report written: {dest}")
 
     return stats["errors"]
 
@@ -1217,6 +1234,12 @@ def main() -> None:
         help="Comma-separated extensions to process this run (e.g. '.md,.txt'), "
              "overriding include_extensions in the config"
     )
+    parser.add_argument(
+        "--report", nargs="?", const="", default=None, metavar="PATH",
+        help="Opt-in: write the end-of-run report as markdown. Bare --report writes "
+             "<input_dir>/redaction-report.md; --report PATH writes to PATH. Off by "
+             "default. The report lists matched text — keep it local, do not commit it."
+    )
     args = parser.parse_args()
 
     cfg = load_config(args.config)
@@ -1234,7 +1257,7 @@ def main() -> None:
     if args.dry_run:
         log.info("DRY RUN mode — no files will be written")
 
-    errors = run(input_dir, cfg, dry_run=args.dry_run)
+    errors = run(input_dir, cfg, dry_run=args.dry_run, report_path=args.report)
     if errors:
         sys.exit(1)
 
