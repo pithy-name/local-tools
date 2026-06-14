@@ -112,6 +112,14 @@ include_extensions:
   - .gif
   - .webp
 
+# Image redaction precision. When false (default), any OCR text LINE containing a
+# match is fully blacked out (conservative — guarantees coverage, but hides the whole
+# row). When true, only the matched WORD's box is blacked (Apple Vision per-range box),
+# falling back to the whole line when a tight box isn't available — so it never
+# under-redacts. Tighter, more readable output (review images regardless). Only affects
+# images + scanned-PDF pages; digital PDFs are always tight.
+tight_image_boxes: false
+
 ocr:
   # Use Apple Vision (on-device, M-series Neural Engine). Recommended.
   # Requires: pip install pyobjc-framework-Vision (included in requirements.txt)

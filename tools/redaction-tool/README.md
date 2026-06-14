@@ -190,6 +190,7 @@ python redact.py <folder> --config ner.yaml --dry-run # auto-detect, preview
 - `copy_unhandled` — mirror unhandled types into `redacted/` (default `false`).
 - `regex_only` — skip the spaCy model entirely; redact only the **regex types you list in `entities`** + `custom_keywords` (default `false`). NER types in `entities` are silently skipped when `true`.
 - `spacy_model` — which spaCy model NER loads (`en_core_web_sm` / `_md` / `_lg`); pick by the size/accuracy trade-off noted in `demo.config.yaml`.
+- `tight_image_boxes` — for image / scanned-PDF OCR, black only the matched **word** (Apple Vision per-range box, with whole-line fallback) instead of the whole OCR line (default `false` = conservative whole-line). Tighter, more readable redactions; digital PDFs are always tight regardless.
 
 ## Generating `custom_keywords` from a names list
 

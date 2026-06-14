@@ -59,6 +59,9 @@ DEFAULT_CONFIG: dict = {
         ".pdf",
         ".png", ".jpg", ".jpeg", ".gif", ".webp",
     ],
+    "tight_image_boxes": False,  # image OCR: black only the matched word's box (Apple Vision
+                                 # per-range box, with whole-line fallback) instead of the whole
+                                 # OCR line. Default off = conservative whole-line blackout.
     "ocr": {
         "use_apple_vision": True,   # on-device Apple OCR (M-series Mac)
         "fallback_tesseract": True, # fall back to Tesseract if Vision unavailable
@@ -567,7 +570,8 @@ def process_csv(
 
 # ── OCR (Apple Vision + Tesseract fallback) ───────────────────────────────────
 
-# Each observation: {"text": str, "bbox_pixels": (x0, y0, x1, y1)}
+# Each observation: {"text": str, "confidence": float, "bbox_pixels": (x0,y0,x1,y1) [line box],
+#   "word_box_fn": (start,end)->pixel_box|None  [Apple Vision only; per-range word box]}
 Observation = dict
 
 _apple_vision_checked: Optional[bool] = None
@@ -595,10 +599,35 @@ def ocr_apple_vision(img) -> list[Observation]:
     We flip the Y axis to convert to PIL's top-left origin.
     """
     import Vision
-    from Foundation import NSURL
+    from Foundation import NSURL, NSMakeRange
 
     width, height = img.size
     observations = []
+
+    def _to_pixels(bb):
+        # Normalized CGRect (origin bottom-left) → PIL pixel box (origin top-left), padded 2px.
+        x, y, w, h = bb.origin.x, bb.origin.y, bb.size.width, bb.size.height
+        if w <= 0 or h <= 0:
+            return None
+        x0 = max(0, int(x * width) - 2)
+        y0 = max(0, int((1.0 - y - h) * height) - 2)
+        x1 = min(width, int((x + w) * width) + 2)
+        y1 = min(height, int((1.0 - y) * height) + 2)
+        return (x0, y0, x1, y1)
+
+    def _word_box_fn(cand, lead):
+        # Per-range (word-level) pixel box for a substring of this line, mapped back to the
+        # original recognized string's offsets (lead = chars lstrip()'d to form obs["text"]).
+        # Returns None when Vision can't resolve it → caller falls back to the whole-line box.
+        # Signature note: pyobjc needs the explicit None for the NSError out-param.
+        def fn(start, end):
+            try:
+                box_obs, _err = cand.boundingBoxForRange_error_(
+                    NSMakeRange(start + lead, max(0, end - start)), None)
+            except Exception:
+                return None
+            return _to_pixels(box_obs.boundingBox()) if box_obs is not None else None
+        return fn
 
     with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
         tmp_path = tmp.name
@@ -619,27 +648,23 @@ def ocr_apple_vision(img) -> list[Observation]:
             if not candidates:
                 continue
             cand = candidates[0]
-            text = str(cand.string()).strip()
+            raw = str(cand.string())
+            text = raw.strip()
             confidence = float(cand.confidence())
             if not text or confidence < 0.3:
                 continue
 
-            # Normalized CGRect (origin bottom-left) → PIL pixel coords (origin top-left)
-            bb = obs.boundingBox()
-            x = bb.origin.x
-            y = bb.origin.y
-            w = bb.size.width
-            h = bb.size.height
-
-            x0 = max(0, int(x * width) - 2)
-            y0 = max(0, int((1.0 - y - h) * height) - 2)
-            x1 = min(width, int((x + w) * width) + 2)
-            y1 = min(height, int((1.0 - y) * height) + 2)
+            # Whole-line box (normalized CGRect → PIL pixels). Skip degenerate lines.
+            line_px = _to_pixels(obs.boundingBox())
+            if line_px is None:
+                continue
+            lead = len(raw) - len(raw.lstrip())   # strip() offset, for word_box_fn ranges
 
             observations.append({
                 "text": text,
                 "confidence": confidence,
-                "bbox_pixels": (x0, y0, x1, y1),
+                "bbox_pixels": line_px,
+                "word_box_fn": _word_box_fn(cand, lead),
             })
     finally:
         os.unlink(tmp_path)
@@ -708,8 +733,11 @@ def redact_image_pixels(img, analyzer, cfg: dict, collector=None):
     Counter keyed by the matched keyword's `find` (for the per-keyword report).
     collector, when set, accumulates {entity_type: {matched_text: count}} so image/PDF
     matches are itemized in the unified report alongside text matches.
-    Conservative: if any PII found in a line's observation, the whole bounding box
-    is blacked out — no partial-line sub-pixel surgery needed.
+    Default (conservative): if any PII is found in a line's observation, the whole line
+    box is blacked out. With cfg['tight_image_boxes'] true AND a per-line `word_box_fn`
+    on the observation (Apple Vision), only the matched word's box is blacked, falling
+    back to the whole-line box when no usable word box is available — so it never
+    under-redacts.
     """
     from PIL import ImageDraw
 
@@ -728,21 +756,32 @@ def redact_image_pixels(img, analyzer, cfg: dict, collector=None):
     count = 0
     blackout = Counter()
 
+    tight = cfg.get("tight_image_boxes", False)
     for obs in observations:
         # visual redaction always uses a black box (no text replacement needed)
         results = analyze(obs["text"], analyzer, cfg, ent_filter)
-        if results:
-            # Black out the entire observation region
-            draw.rectangle(obs["bbox_pixels"], fill=(0, 0, 0))
-            count += len(results)
+        if not results:
+            continue
+        line_box = obs["bbox_pixels"]
+        # Tight mode: black only each matched word's box (Apple Vision per-range box via
+        # word_box_fn), falling back to the whole-line box when that box is unavailable —
+        # so we NEVER under-redact. Default (or any OCR backend without word_box_fn, e.g.
+        # Tesseract whose observations are already word-level) blacks the whole line.
+        word_box_fn = obs.get("word_box_fn") if tight else None
+        if word_box_fn is not None:
             for r in results:
-                find = kw_finds.get(r.entity_type)
-                if find is not None:
-                    blackout[find] += 1
-                if collector is not None:
-                    entity_text = obs["text"][r.start:r.end]
-                    bucket = collector.setdefault(r.entity_type, {})
-                    bucket[entity_text] = bucket.get(entity_text, 0) + 1
+                draw.rectangle(word_box_fn(r.start, r.end) or line_box, fill=(0, 0, 0))
+        else:
+            draw.rectangle(line_box, fill=(0, 0, 0))
+        count += len(results)
+        for r in results:
+            find = kw_finds.get(r.entity_type)
+            if find is not None:
+                blackout[find] += 1
+            if collector is not None:
+                entity_text = obs["text"][r.start:r.end]
+                bucket = collector.setdefault(r.entity_type, {})
+                bucket[entity_text] = bucket.get(entity_text, 0) + 1
 
     return img, count, blackout
 
