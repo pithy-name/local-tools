@@ -12,3 +12,6 @@ names-dupes.txt
 # Backups + atomic-write temps (config.yaml.bak from --write, names.md.bak, *.tmp) — may hold PII.
 *.bak
 *.tmp
+
+# Opt-in --report output — itemizes matched PII, never publish.
+redaction-report*.md

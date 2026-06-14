@@ -305,11 +305,22 @@ def render_redaction_report(report, *, title, files_scanned, files_matched,
 
 
 def render_markdown_report(report, *, title, files_scanned, files_matched,
-                           extensions=None, output_dir=None, meta=None) -> str:
+                           extensions=None, output_dir=None, meta=None,
+                           heading=None, file_stats=None) -> str:
     """Render the report as a self-contained markdown doc (for `redact.py --report`):
-    a SENSITIVE keep-local banner, optional caller-supplied `meta` bullets (e.g.
-    mode/entities), a Summary table of subtotals from the report dict, and the full
+    a folder-named H1, a two-line SENSITIVE keep-local banner, optional caller-supplied
+    `meta` bullets (mode/entities/timestamp/…), a Summary table (file-type counts from
+    `file_stats` plus per-entity/keyword subtotals from the report dict), and the full
     itemized text report (render_redaction_report) inside a fenced block.
+
+    heading: the markdown H1 (e.g. "Redaction Report — <folder>"); defaults to `title`
+        for back-compat. Kept IDENTICAL across dry-run and real runs, so the only
+        dry/real differences live in `meta` (Run type), the `Generated` timestamp, and
+        the itemized banner / `Output at:` line (the real==dry requirement).
+    meta: bullet items — plain strings (`- {s}`) OR (label, value) tuples rendered as
+        bold-key bullets (`- **{label}:** {value}`).
+    file_stats: optional list of (label, value) rows inserted into the Summary table
+        (file-type counts, not-copied, errors, …), before the per-entity/keyword rows.
 
     Pure — the markdown lives here (the rendering concern) so redact.py only calls
     and writes it. Matched PII appears in the itemized block; callers keep it local.
@@ -320,6 +331,8 @@ def render_markdown_report(report, *, title, files_scanned, files_matched,
 
     rows = ["| Metric | Value |", "|---|---|",
             f"| Files scanned · with matches | {files_scanned} · {files_matched} |"]
+    for label, value in (file_stats or []):
+        rows.append(f"| {label} | {value} |")
     for b in report.get("pattern_matches", []):
         rows.append(f"| PATTERN — {b['entity_type']} | {b['unique']} unique · {b['hits']} hits |")
     for b in report.get("model_entities", []):
@@ -331,11 +344,18 @@ def render_markdown_report(report, *, title, files_scanned, files_matched,
                 f"{sum(g['hits'] for g in krep)} hits |")
     rows.append(f"| GRAND TOTAL | {report.get('grand_total', 0)} |")
 
-    meta_block = ("\n".join(f"- {m}" for m in meta) + "\n\n") if meta else ""
+    meta_lines = []
+    for m in (meta or []):
+        if isinstance(m, (tuple, list)) and len(m) == 2:
+            meta_lines.append(f"- **{m[0]}:** {m[1]}")
+        else:
+            meta_lines.append(f"- {m}")
+    meta_block = ("\n".join(meta_lines) + "\n\n") if meta_lines else ""
+
     return (
-        f"# {title}\n\n"
-        "> ⚠️ SENSITIVE — this report lists matched PII (emails, names, URLs). "
-        "Keep it local; do NOT commit it or place it inside `redacted/`.\n\n"
+        f"# {heading or title}\n\n"
+        "> ⚠️ **SENSITIVE — contains real PII.** Lists matched emails, names, and URLs in full.\n"
+        "> Keep it local: do NOT commit it, and do NOT place it inside `redacted/`.\n\n"
         f"{meta_block}"
         "## Summary\n\n"
         + "\n".join(rows) + "\n\n"

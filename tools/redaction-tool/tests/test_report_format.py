@@ -72,6 +72,57 @@ class TestRenderMarkdownReport(unittest.TestCase):
         self.assertIn("- Mode: regex-only", md)
         self.assertIn("- entities: EMAIL_ADDRESS, URL", md)
 
+    # ── restored wrapper: folder-named H1, bold meta pairs, file-type summary,
+    #    two-line SENSITIVE banner (parity with the hand-saved prototype) ──
+
+    def test_heading_sets_h1_and_keeps_itemized_banner(self):
+        """heading drives the markdown H1 (identical dry-vs-real); the dry/real
+        `title` still appears as the itemized banner inside the fence."""
+        from report_format import render_markdown_report
+        md = render_markdown_report(self._report(), title="REDACTION PREVIEW (--dry-run)",
+                                    files_scanned=2, files_matched=2,
+                                    heading="Redaction Report — sample-folder")
+        self.assertIn("# Redaction Report — sample-folder", md)   # H1 = heading
+        self.assertNotIn("# REDACTION PREVIEW", md)               # title NOT used as H1
+        self.assertIn("REDACTION PREVIEW (--dry-run)", md)        # title is the itemized banner
+
+    def test_heading_defaults_to_title(self):
+        """Back-compat: with no heading, H1 falls back to title."""
+        from report_format import render_markdown_report
+        md = render_markdown_report(self._report(), title="REDACTION COMPLETE",
+                                    files_scanned=1, files_matched=1)
+        self.assertIn("# REDACTION COMPLETE", md)
+
+    def test_meta_bold_pairs(self):
+        """meta items may be (label, value) tuples → bold-key bullets."""
+        from report_format import render_markdown_report
+        md = render_markdown_report(self._report(), title="REDACTION COMPLETE",
+                                    files_scanned=1, files_matched=1,
+                                    meta=[("Generated", "2026-06-13 17:30 PDT"),
+                                          ("Mode", "regex-only (no model)")])
+        self.assertIn("- **Generated:** 2026-06-13 17:30 PDT", md)
+        self.assertIn("- **Mode:** regex-only (no model)", md)
+
+    def test_file_stats_rows_in_summary(self):
+        """file_stats rows appear in the Summary, above GRAND TOTAL."""
+        from report_format import render_markdown_report
+        md = render_markdown_report(self._report(), title="REDACTION COMPLETE",
+                                    files_scanned=15, files_matched=6,
+                                    file_stats=[("JSON files", 4), ("PDF files", 14),
+                                                ("Errors", 0)])
+        self.assertIn("| JSON files | 4 |", md)
+        self.assertIn("| PDF files | 14 |", md)
+        self.assertIn("| Errors | 0 |", md)
+        self.assertLess(md.index("| JSON files | 4 |"), md.index("| GRAND TOTAL |"))
+
+    def test_two_line_sensitive_banner(self):
+        """The keep-local banner is a two-line blockquote."""
+        from report_format import render_markdown_report
+        md = render_markdown_report(self._report(), title="REDACTION COMPLETE",
+                                    files_scanned=1, files_matched=1)
+        self.assertIn("SENSITIVE", md)
+        self.assertIn("\n> Keep it local", md)                    # a genuine 2nd blockquote line
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1093,15 +1093,38 @@ def run(input_dir: Path, cfg: dict, dry_run: bool, report_path: Optional[str] = 
     # default — the report itemizes matched PII. redact.py skips redaction-report*.md
     # on later runs (see _is_report_file), so this file is never re-redacted.
     if report_path is not None:
+        from datetime import datetime
         mode = ("regex-only (no model)" if regex_only
                 else "keyword-only" if keyword_only else "NER (spaCy model)")
-        meta = [f"Mode: {mode}",
-                f"entities: {cfg.get('entities') or '[]'}",
-                f"custom keywords loaded: {len(keywords)}"]
+        ent_list = cfg.get("entities") or []
+        ent_str = ", ".join(ent_list) if ent_list else "(none — keyword-only)"
+        inc_str = ", ".join(extensions) if extensions else "all configured extensions"
+        n_custom = sum(1 for k in keywords if k.get("replace") is not None)
+        n_default = len(keywords) - n_custom
+        run_type = ("dry-run preview (no files written)" if dry_run
+                    else f"real run (wrote to {output_dir.name}/)")
+        meta = [
+            ("Run type", run_type),
+            ("Generated", datetime.now().astimezone().strftime("%Y-%m-%d %H:%M %Z")),
+            ("Mode", mode),
+            ("Entities", ent_str),
+            ("Include", inc_str),
+            ("Custom keywords loaded",
+             f"{len(keywords)} ({n_custom} with custom replacement, {n_default} blacked out)"),
+        ]
+        _stat_rows = [("Markdown files", stats["md"]), ("Plain-text files", stats["txt"]),
+                      ("HTML files", stats["html"]), ("JSON files", stats["json"]),
+                      ("CSV files", stats["csv"]), ("PDF files", stats["pdf"]),
+                      ("Image files", stats["img"])]
+        file_stats = [(label, n) for label, n in _stat_rows if n]
+        if stats["uncopied"]:
+            file_stats.append(("Not copied (unhandled)", stats["uncopied"]))
+        file_stats.append(("Errors", stats["errors"]))
         md = render_markdown_report(
             rep, title=title, files_scanned=files_scanned,
             files_matched=files_with_matches, extensions=extensions,
-            output_dir=None if dry_run else output_dir, meta=meta)
+            output_dir=None if dry_run else output_dir, meta=meta,
+            heading=f"Redaction Report — {input_dir.name}", file_stats=file_stats)
         dest = (input_dir / "redaction-report.md" if report_path == ""
                 else Path(report_path).expanduser())
         dest.write_text(md, encoding="utf-8")

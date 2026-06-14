@@ -36,6 +36,11 @@ class TestReportFlag(unittest.TestCase):
         self.assertIn("## Summary", md)
         self.assertIn("GRAND TOTAL", md)
         self.assertIn("SENSITIVE", md)
+        # restored wrapper: folder-named H1, generated timestamp, run type, file-type row
+        self.assertIn("# Redaction Report —", md)
+        self.assertIn("**Generated:**", md)
+        self.assertIn("**Run type:**", md)
+        self.assertIn("| Markdown files | 1 |", md)   # the one .md in _setup()
 
     def test_explicit_path(self):
         tmp, cfg = self._setup()
