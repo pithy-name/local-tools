@@ -191,6 +191,7 @@ python redact.py <folder> --config ner.yaml --dry-run # auto-detect, preview
 - `regex_only` — skip the spaCy model entirely; redact only the **regex types you list in `entities`** + `custom_keywords` (default `false`). NER types in `entities` are silently skipped when `true`.
 - `spacy_model` — which spaCy model NER loads (`en_core_web_sm` / `_md` / `_lg`); pick by the size/accuracy trade-off noted in `demo.config.yaml`.
 - `tight_image_boxes` — for image / scanned-PDF OCR, black only the matched **word** (Apple Vision per-range box, with whole-line fallback) instead of the whole OCR line (default `false` = conservative whole-line). Tighter, more readable redactions; digital PDFs are always tight regardless.
+- `report` — persist the end-of-run report to disk every run (default `false` = console only). `true` writes `<input_dir>/redaction-report.md`; a string path writes there instead. The `--report` flag overrides this for a single run. The report lists matched text — keep it local, never commit it.
 
 ## Generating `custom_keywords` from a names list
 
@@ -314,7 +315,7 @@ CUSTOM KEYWORDS — replaced
 
 Each subsection always prints. When it has no rows it shows one of two states, with a `← reason` note: **`none`** = the detection ran but matched nothing, or **`N/A`** = that detection wasn't engaged this run (nothing of that kind was configured — e.g. no NER types, so `MODEL ENTITIES` is `N/A`; no plain keywords, so blacked-out is `N/A`). `PATTERN MATCHES` are regex recognizers, `MODEL ENTITIES` are spaCy NER, and custom keywords split by configured intent (plain → blacked out; `find→replace` → the pseudonym, aliases grouped under it). `GRAND TOTAL` equals `Total redactions`.
 
-**Saving the report — `--report` (opt-in).** By default the end-of-run report only prints to the console. Pass `--report` to also write it as markdown beside your input (`<input_dir>/redaction-report.md`), or `--report PATH` for a chosen path. It's **opt-in because the report lists matched text** — keep it local, don't commit it, and don't put it in `redacted/`. redact.py never scans or redacts a `redaction-report*.md` file, so a saved report won't be pulled back into `redacted/` (which would otherwise inflate counts once `.md` is an included type). `--report` overwrites a single current report each run; to keep history, rename or move older copies and the tool leaves them untouched.
+**Saving the report — `--report` (opt-in).** By default the end-of-run report only prints to the console. Pass `--report` to also write it as markdown beside your input (`<input_dir>/redaction-report.md`), or `--report PATH` for a chosen path. To make this the default for every run, set `report: true` (or `report: /some/path.md`) in your config; `--report` on the command line overrides the config value for that run. It's **opt-in because the report lists matched text** — keep it local, don't commit it, and don't put it in `redacted/`. redact.py never scans or redacts a `redaction-report*.md` file, so a saved report won't be pulled back into `redacted/` (which would otherwise inflate counts once `.md` is an included type). `--report` overwrites a single current report each run; to keep history, rename or move older copies and the tool leaves them untouched.
 
 ## Privacy
 

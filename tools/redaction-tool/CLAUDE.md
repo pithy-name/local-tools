@@ -85,5 +85,7 @@ scan/leak-guard logic) also run under system `python3`.
 `config.yaml` controls: `entities` (incl. `URL`), `custom_keywords` (find→replace
 overrides), `replacement` char, `spacy_model`, `output_dir`, `copy_unhandled`
 (leak guard), `decode_nested_json` (decode double-encoded JSON values),
-`regex_only` (skip spaCy; regex entities + keywords only), `skip_extensions`,
-OCR settings.
+`regex_only` (skip spaCy; regex entities + keywords only), `tight_image_boxes`
+(word-level image redaction), `report` (persist the end-of-run report to disk:
+`true` → `<dir>/redaction-report.md`, or a path string; `--report` overrides it),
+`skip_extensions`, OCR settings.

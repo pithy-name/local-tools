@@ -54,6 +54,9 @@ DEFAULT_CONFIG: dict = {
     "decode_nested_json": True,  # JSON string values that are themselves JSON (double-encoded
                                  # blobs, e.g. rich-text deltas) → decode, redact inner text, re-encode
     "regex_only": False,         # skip spaCy model; match only regex entities (EMAIL/URL/…) + keywords
+    "report": False,             # write the end-of-run report as markdown (off by default). True →
+                                 # <input_dir>/redaction-report.md; a string → that path. CLI --report
+                                 # overrides this. The report lists matched text — keep it local.
     "include_extensions": [          # allowlist of types to process (handled set)
         ".md", ".txt", ".html", ".htm", ".json", ".csv",
         ".pdf",
@@ -84,6 +87,24 @@ def load_config(path: Optional[str]) -> dict:
             else:
                 cfg[k] = v
     return cfg
+
+
+def resolve_report_path(cli_report: Optional[str], cfg_report) -> Optional[str]:
+    """Decide the effective markdown-report path from the CLI --report value and the
+    config `report` key. The CLI flag, when supplied, always wins (runtime intent
+    overrides config).
+
+    cli_report: None (flag absent), "" (bare --report → default location), or a PATH.
+    cfg_report: config `report` — False/None (off), True (default location), or a PATH string.
+    Returns: None (no report), "" (write <input_dir>/redaction-report.md), or a PATH string.
+    """
+    if cli_report is not None:
+        return cli_report                       # bare "" → default location; PATH → that path
+    if cfg_report is True:
+        return ""                               # config on → default location
+    if isinstance(cfg_report, str) and cfg_report.strip():
+        return cfg_report                       # config-specified path
+    return None                                 # off (False / None / "" / anything else)
 
 
 def _normalize_extensions(items) -> list:
@@ -1300,7 +1321,8 @@ def main() -> None:
         "--report", nargs="?", const="", default=None, metavar="PATH",
         help="Opt-in: write the end-of-run report as markdown. Bare --report writes "
              "<input_dir>/redaction-report.md; --report PATH writes to PATH. Off by "
-             "default. The report lists matched text — keep it local, do not commit it."
+             "default; can also be enabled persistently via `report:` in config (this "
+             "flag overrides it). The report lists matched text — keep it local, do not commit it."
     )
     args = parser.parse_args()
 
@@ -1319,7 +1341,8 @@ def main() -> None:
     if args.dry_run:
         log.info("DRY RUN mode — no files will be written")
 
-    errors = run(input_dir, cfg, dry_run=args.dry_run, report_path=args.report)
+    report_path = resolve_report_path(args.report, cfg.get("report"))
+    errors = run(input_dir, cfg, dry_run=args.dry_run, report_path=report_path)
     if errors:
         sys.exit(1)
 

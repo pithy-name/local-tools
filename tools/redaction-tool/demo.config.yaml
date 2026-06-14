@@ -120,6 +120,15 @@ include_extensions:
 # images + scanned-PDF pages; digital PDFs are always tight.
 tight_image_boxes: false
 
+# End-of-run report FILE. The unified report ALWAYS prints to the console (dry-run
+# and real run alike); this only controls whether it is ALSO saved to disk as markdown.
+# false (default) → console only. true → write <input_dir>/redaction-report.md.
+# A string path → write the report there instead. The CLI flag --report overrides this
+# for a single run (bare --report = default location; --report PATH = that path).
+# The report LISTS MATCHED TEXT (the PII it found) — keep it local, never commit it
+# (redaction-report*.md is gitignored, and the tool auto-skips it on later runs).
+report: false
+
 ocr:
   # Use Apple Vision (on-device, M-series Neural Engine). Recommended.
   # Requires: pip install pyobjc-framework-Vision (included in requirements.txt)
