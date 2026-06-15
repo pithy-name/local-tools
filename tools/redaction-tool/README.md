@@ -187,7 +187,7 @@ python redact.py <folder> --config ner.yaml --dry-run # auto-detect, preview
 - `decode_nested_json` — decode double-encoded JSON string values (rich-text "delta" blobs) so the analyzer reads clean text instead of NER-tagging markup (default `true`).
 - `include_extensions` — allowlist of types to process; override per run with `--include .md,.txt`.
 - `skip_extensions` — types ignored entirely (demo default: `.mp4 .mov .m4v` — PDFs are *not* skipped).
-- `copy_unhandled` — mirror unhandled types into `redacted/` (default `false`).
+- `copy_unhandled` — what to do with **unhandled** files: types the tool has no handler for (e.g. `.zip .xlsx`) or that aren't in this run's allowlist (`include_extensions` / `--include`). Default `false` = left in the source, **not** placed in `redacted/` (leak guard); `true` = copied through unchanged. This only affects *unhandled* files — a **handled** file with zero redactions is still written to `redacted/` (an unchanged copy), regardless of this setting.
 - `regex_only` — skip the spaCy model entirely; redact only the **regex types you list in `entities`** + `custom_keywords` (default `false`). NER types in `entities` are silently skipped when `true`.
 - `spacy_model` — which spaCy model NER loads (`en_core_web_sm` / `_md` / `_lg`); pick by the size/accuracy trade-off noted in `demo.config.yaml`.
 - `tight_image_boxes` — for image / scanned-PDF OCR, black only the matched **word** (Apple Vision per-range box, with whole-line fallback) instead of the whole OCR line (default `false` = conservative whole-line). Tighter, more readable redactions; digital PDFs are always tight regardless.
