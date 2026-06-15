@@ -22,6 +22,7 @@ import shutil
 import sys
 import tempfile
 from collections import Counter
+from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
@@ -48,7 +49,7 @@ DEFAULT_CONFIG: dict = {
     ],
     "custom_keywords": [],       # exact strings to always redact (word-boundary match)
     "replacement": "█████",      # what replaced text looks like
-    "spacy_model": "en_core_web_lg",  # change to en_core_web_sm for a ~12MB model
+    "spacy_model": "en_core_web_sm",  # small/fast (~12MB) default; en_core_web_lg (~750MB) = higher recall but noisier (more false positives)
     "output_dir": "redacted",    # created inside input_dir
     "copy_unhandled": False,     # leak guard: don't copy unhandled file types into redacted/
     "decode_nested_json": True,  # JSON string values that are themselves JSON (double-encoded
@@ -57,6 +58,11 @@ DEFAULT_CONFIG: dict = {
     "report": False,             # write the end-of-run report as markdown (off by default). True →
                                  # <input_dir>/redaction-report.md; a string → that path. CLI --report
                                  # overrides this. The report lists matched text — keep it local.
+    "timestamp_outputs": False,  # suffix a per-run timestamp (YYYYMMDD-HHMMSS) onto the redacted dir
+                                 # and the default report file, so test re-runs don't clobber each
+                                 # other. Off by default = stable redacted/ + redaction-report.md.
+    "names_file": "names.md",    # --full-throttle: the names list to dupe-check + propagate into this
+                                 # config (via gen_keywords) before redacting. Resolved from cwd.
     "include_extensions": [          # allowlist of types to process (handled set)
         ".md", ".txt", ".html", ".htm", ".json", ".csv",
         ".pdf",
@@ -73,20 +79,28 @@ DEFAULT_CONFIG: dict = {
 }
 
 
-def load_config(path: Optional[str]) -> dict:
+def _merge_overrides(overrides: dict) -> dict:
+    """Merge a parsed-YAML overrides dict over DEFAULT_CONFIG. Nested dicts (e.g. `ocr`)
+    merge shallowly; a present-but-null key is ignored (so a commented-out YAML key keeps
+    the default). Shared by load_config (from file) and full_throttle (in-memory splice)."""
     cfg = dict(DEFAULT_CONFIG)
     cfg["ocr"] = dict(DEFAULT_CONFIG["ocr"])  # deep copy nested dict
+    for k, v in (overrides or {}).items():
+        if v is None:
+            continue  # present-but-empty YAML key (e.g. all examples commented out) → keep default
+        if isinstance(v, dict) and isinstance(cfg.get(k), dict):
+            cfg[k] = {**cfg[k], **v}
+        else:
+            cfg[k] = v
+    return cfg
+
+
+def load_config(path: Optional[str]) -> dict:
+    overrides: dict = {}
     if path and Path(path).exists():
         with open(path) as f:
             overrides = yaml.safe_load(f) or {}
-        for k, v in overrides.items():
-            if v is None:
-                continue  # present-but-empty YAML key (e.g. all examples commented out) → keep default
-            if isinstance(v, dict) and isinstance(cfg.get(k), dict):
-                cfg[k] = {**cfg[k], **v}
-            else:
-                cfg[k] = v
-    return cfg
+    return _merge_overrides(overrides)
 
 
 def resolve_report_path(cli_report: Optional[str], cfg_report) -> Optional[str]:
@@ -107,6 +121,16 @@ def resolve_report_path(cli_report: Optional[str], cfg_report) -> Optional[str]:
     return None                                 # off (False / None / "" / anything else)
 
 
+def add_timestamp(name: str, ts: str) -> str:
+    """Insert a run timestamp into an output name. If `name` has a file extension the
+    timestamp goes BEFORE it (`redaction-report.md` → `redaction-report-<ts>.md`);
+    otherwise it is appended (`redacted` → `redacted-<ts>`). Pure."""
+    p = Path(name)
+    if p.suffix:
+        return f"{p.stem}-{ts}{p.suffix}"
+    return f"{name}-{ts}"
+
+
 def _normalize_extensions(items) -> list:
     """Lowercase each extension and ensure a leading dot. 'MD' / '.Json' → '.md' / '.json'."""
     out = []
@@ -119,6 +143,14 @@ def _normalize_extensions(items) -> list:
     return out
 
 
+def _apply_cli_overrides(cfg: dict, args) -> dict:
+    """Apply runtime CLI flags that override config values (currently --include).
+    Shared by the normal path and --full-throttle so both honor the same overrides."""
+    if getattr(args, "include", None):
+        cfg["include_extensions"] = _normalize_extensions(args.include.split(","))
+    return cfg
+
+
 # redact.py reserves `redaction-report*.md` for its own end-of-run report (written
 # next to the input). A run must never scan/redact those — else a prior report gets
 # re-redacted into redacted/, inflating counts (matters now that .md can be included).
@@ -128,6 +160,16 @@ _REPORT_RE = re.compile(r"(?i)^redaction-report.*\.md$")
 def _is_report_file(name: str) -> bool:
     """True for the tool's own report files (redaction-report*.md, any -N version)."""
     return bool(_REPORT_RE.match(name))
+
+
+def _is_own_output_dir(name: str, out_base: str) -> bool:
+    """True if a directory NAME is one of the tool's own output dirs — the base output
+    dir (`redacted`) or any suffixed variant (`redacted-<timestamp>`, and legacy/unknown
+    suffixes like `redacted-ogu`). Used to skip prior/own output when scanning input so a
+    re-run never re-redacts already-redacted files. Matches on name only — callers apply
+    it to dirs NESTED inside input_dir, never to input_dir itself (so deliberately
+    pointing the tool AT a redacted dir still processes it)."""
+    return name == out_base or name.startswith(out_base + "-")
 
 
 # ── Import checks ─────────────────────────────────────────────────────────────
@@ -258,7 +300,7 @@ def build_analyzer(cfg: dict) -> tuple:
     # warnings fire during AnalyzerEngine construction below.
     _silence_benign_presidio_warnings()
 
-    model_name = cfg.get("spacy_model", "en_core_web_lg")
+    model_name = cfg.get("spacy_model", "en_core_web_sm")
     nlp_cfg = {
         "nlp_engine_name": "spacy",
         "models": [{"lang_code": "en", "model_name": model_name}],
@@ -946,7 +988,10 @@ def _merge_collector(dst: dict, src: dict) -> None:
 
 def run(input_dir: Path, cfg: dict, dry_run: bool, report_path: Optional[str] = None) -> int:
     """Process all files in input_dir. Returns the number of per-file errors."""
-    output_dir = input_dir / cfg["output_dir"]
+    ts = datetime.now().strftime("%Y%m%d-%H%M%S")   # one timestamp per run (dir + report)
+    use_ts = cfg.get("timestamp_outputs", False)
+    out_name = add_timestamp(cfg["output_dir"], ts) if use_ts else cfg["output_dir"]
+    output_dir = input_dir / out_name
     if not dry_run:
         output_dir.mkdir(exist_ok=True)
 
@@ -956,10 +1001,17 @@ def run(input_dir: Path, cfg: dict, dry_run: bool, report_path: Optional[str] = 
     total_redactions = 0
     files_with_matches = 0   # files with >=1 redaction (for the report header)
 
-    # Collect all files first (excluding the output dir) so we can decide what to load.
+    # Collect all files first, excluding the tool's OWN output — the current run's dir AND
+    # any prior output (redacted/, redacted-<ts>/, redacted-ogu, …) nested in the input, so
+    # a re-run never re-redacts already-redacted files. Tested on dirs NESTED in input_dir
+    # only (rel.parts[:-1] drops the filename and never includes input_dir's own name), so
+    # deliberately pointing the tool AT a redacted dir still processes it.
+    out_base = cfg["output_dir"]
     all_files = sorted(f for f in input_dir.rglob("*") if f.is_file())
     files = [f for f in all_files
-             if output_dir not in f.parents and not _is_report_file(f.name)]
+             if not any(_is_own_output_dir(part, out_base)
+                        for part in f.relative_to(input_dir).parts[:-1])
+             and not _is_report_file(f.name)]
 
     # Keyword-only mode (entities empty) redacts text via the stdlib keyword_redactor
     # and loads the spaCy model ONLY when a config-enabled image/PDF is present —
@@ -992,7 +1044,7 @@ def run(input_dir: Path, cfg: dict, dry_run: bool, report_path: Optional[str] = 
         analyzer, kw_replacements = build_regex_analyzer(cfg)
         log.info("Regex-only mode — spaCy model skipped, NER entities disabled.")
     elif (not keyword_only) or has_binary:
-        log.info(f"Loading NLP model '{cfg.get('spacy_model', 'en_core_web_lg')}' "
+        log.info(f"Loading NLP model '{cfg.get('spacy_model', 'en_core_web_sm')}' "
                  f"(first run may take ~30s)…")
         analyzer, kw_replacements = build_analyzer(cfg)
         log.info("NLP model ready.")
@@ -1153,7 +1205,6 @@ def run(input_dir: Path, cfg: dict, dry_run: bool, report_path: Optional[str] = 
     # default — the report itemizes matched PII. redact.py skips redaction-report*.md
     # on later runs (see _is_report_file), so this file is never re-redacted.
     if report_path is not None:
-        from datetime import datetime
         mode = ("regex-only (no model)" if regex_only
                 else "keyword-only" if keyword_only else "NER (spaCy model)")
         ent_list = cfg.get("entities") or []
@@ -1185,12 +1236,65 @@ def run(input_dir: Path, cfg: dict, dry_run: bool, report_path: Optional[str] = 
             files_matched=files_with_matches, extensions=extensions,
             output_dir=None if dry_run else output_dir, meta=meta,
             heading=f"Redaction Report — {input_dir.name}", file_stats=file_stats)
-        dest = (input_dir / "redaction-report.md" if report_path == ""
+        default_report = (add_timestamp("redaction-report.md", ts) if use_ts
+                          else "redaction-report.md")
+        dest = (input_dir / default_report if report_path == ""
                 else Path(report_path).expanduser())
         dest.write_text(md, encoding="utf-8")
         log.info(f"  Report written: {dest}")
 
     return stats["errors"]
+
+
+# ── Full throttle (dupe-check → propagate → redact) ───────────────────────────
+
+def full_throttle(input_dir: Path, cfg: dict, args, config_path: Optional[str]) -> int:
+    """--full-throttle: dupe-check the names file, propagate it into the config via
+    gen_keywords, then redact `input_dir` — in one shot.
+
+    A real run writes config.yaml (with a .bak) then redacts. A --dry-run propagates the
+    keywords IN-MEMORY (config.yaml is NOT touched), writes no redacted output, but still
+    writes the report (dry-run already reports). Aborts before ANY write if: the names
+    file is missing, it has duplicate find-terms (the redactor rejects those), the config
+    file is missing, or it lacks the gen_keywords markers. Returns run()'s error count."""
+    from gen_keywords import (
+        find_duplicate_finds, format_keywords, splice_into_config, update_config_file)
+    names_path = Path(cfg.get("names_file", "names.md")).expanduser()
+    if not names_path.is_file():
+        sys.exit(f"--full-throttle: names file not found: {names_path} "
+                 f"(set `names_file` in your config). Nothing changed.")
+    if not config_path or not Path(config_path).exists():
+        sys.exit(f"--full-throttle: config file not found: {config_path!r} — needed to "
+                 f"propagate keywords into. Nothing changed.")
+    text = names_path.read_text(encoding="utf-8")
+    dups = find_duplicate_finds(text)
+    if dups:
+        sys.exit(f"--full-throttle: {len(dups)} duplicate find-term(s) in "
+                 f"{names_path.name} — the redactor rejects duplicate finds. Run "
+                 f"`python gen_keywords.py {names_path}` to see which, fix them, then "
+                 f"re-run. Nothing changed.")
+    generated, warnings = format_keywords(text)
+    for w in warnings:
+        log.warning(f"gen_keywords: {w}")
+    if args.dry_run:
+        try:
+            new_text = splice_into_config(
+                Path(config_path).read_text(encoding="utf-8"), generated)
+        except ValueError as e:
+            sys.exit(f"--full-throttle: {e}")
+        cfg = _merge_overrides(yaml.safe_load(new_text) or {})
+        log.info("--full-throttle --dry-run: keywords propagated in memory only "
+                 "(config.yaml unchanged).")
+    else:
+        try:
+            update_config_file(config_path, generated)
+        except ValueError as e:
+            sys.exit(f"--full-throttle: {e}")
+        cfg = load_config(config_path)
+        log.info(f"--full-throttle: propagated {names_path.name} → {config_path}")
+    cfg = _apply_cli_overrides(cfg, args)
+    report_path = resolve_report_path(args.report, cfg.get("report"))
+    return run(input_dir, cfg, dry_run=args.dry_run, report_path=report_path)
 
 
 # ── Scan (discovery) ──────────────────────────────────────────────────────────
@@ -1248,17 +1352,20 @@ def _texts_for_scan(src: Path, ext: str, cfg: dict):
 
 
 def scan(input_dir: Path, cfg: dict) -> None:
-    """Discovery scan: run NER over text files and LIST candidate identities by
-    entity type. Writes nothing. Images/PDF/HTML are not yet scanned."""
+    """Discovery scan: run NER over the folder and LIST candidate identities by
+    entity type. Writes nothing. Handles text and HTML, plus images and scanned
+    PDFs via OCR (see SCAN_EXTS)."""
     from report_format import collect_entities, render_scan_report
 
-    log.info(f"Loading NLP model '{cfg.get('spacy_model', 'en_core_web_lg')}' for scan…")
+    log.info(f"Loading NLP model '{cfg.get('spacy_model', 'en_core_web_sm')}' for scan…")
     analyzer, _ = build_analyzer(cfg)
     entities = cfg.get("entities") or DEFAULT_CONFIG["entities"]
 
-    output_dir = input_dir / cfg["output_dir"]
+    out_base = cfg["output_dir"]
     files = [f for f in sorted(input_dir.rglob("*"))
-             if f.is_file() and output_dir not in f.parents
+             if f.is_file()
+             and not any(_is_own_output_dir(part, out_base)
+                         for part in f.relative_to(input_dir).parts[:-1])
              and not _is_report_file(f.name)]
     SCAN_EXTS = {".md", ".txt", ".json", ".csv", ".html", ".htm",
                  ".png", ".jpg", ".jpeg", ".gif", ".webp", ".pdf"}
@@ -1324,11 +1431,18 @@ def main() -> None:
              "default; can also be enabled persistently via `report:` in config (this "
              "flag overrides it). The report lists matched text — keep it local, do not commit it."
     )
+    parser.add_argument(
+        "--full-throttle", action="store_true",
+        help="Run the whole pipeline on <input_dir>: dupe-check the names file "
+             "(`names_file` in config, default names.md) → propagate it into the config "
+             "via gen_keywords → redact. Aborts if names has duplicate finds. With "
+             "--dry-run the config is propagated in memory only (config.yaml untouched) "
+             "and no files are redacted, but the report is still written."
+    )
     args = parser.parse_args()
 
     cfg = load_config(args.config)
-    if args.include:
-        cfg["include_extensions"] = _normalize_extensions(args.include.split(","))
+    cfg = _apply_cli_overrides(cfg, args)
     input_dir = Path(args.input_dir).expanduser().resolve()
 
     if not input_dir.is_dir():
@@ -1341,8 +1455,11 @@ def main() -> None:
     if args.dry_run:
         log.info("DRY RUN mode — no files will be written")
 
-    report_path = resolve_report_path(args.report, cfg.get("report"))
-    errors = run(input_dir, cfg, dry_run=args.dry_run, report_path=report_path)
+    if args.full_throttle:
+        errors = full_throttle(input_dir, cfg, args, args.config)
+    else:
+        report_path = resolve_report_path(args.report, cfg.get("report"))
+        errors = run(input_dir, cfg, dry_run=args.dry_run, report_path=report_path)
     if errors:
         sys.exit(1)
 

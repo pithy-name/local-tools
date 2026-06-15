@@ -50,9 +50,9 @@ custom_keywords:
 replacement: "█████"
 
 # spaCy model to use for NLP. Tradeoffs:
-#   en_core_web_lg  — best accuracy, ~750 MB download  (recommended)
-#   en_core_web_md  — good accuracy, ~43 MB download
-#   en_core_web_sm  — acceptable, ~12 MB download (fastest setup)
+#   en_core_web_sm  — small/fast, ~12 MB download  (default; recommended)
+#   en_core_web_md  — mid-size, ~43 MB download
+#   en_core_web_lg  — ~750 MB; higher recall but noisier (more false positives)
 # After changing, run: python -m spacy download <model_name>
 spacy_model: en_core_web_sm
 
@@ -128,6 +128,19 @@ tight_image_boxes: false
 # The report LISTS MATCHED TEXT (the PII it found) — keep it local, never commit it
 # (redaction-report*.md is gitignored, and the tool auto-skips it on later runs).
 report: false
+
+# Timestamped outputs (testing aid). When false (default), output goes to a stable
+# `redacted/` dir and `redaction-report.md`. When true, each run suffixes a per-run
+# timestamp (YYYYMMDD-HHMMSS) onto BOTH — e.g. `redacted-20260614-134507/` and
+# `redaction-report-20260614-134507.md` — so repeated test runs don't clobber each
+# other and a run's dir + report share one timestamp. An explicit `report:` path is
+# left as-is (only auto-derived names get the suffix).
+timestamp_outputs: false
+
+# Names file for --full-throttle. That flag dupe-checks this file, propagates it into
+# this config (via gen_keywords, between the gen_keywords markers), then redacts — all
+# in one command. Path resolves from the current working directory. Default: names.md.
+names_file: names.md
 
 ocr:
   # Use Apple Vision (on-device, M-series Neural Engine). Recommended.

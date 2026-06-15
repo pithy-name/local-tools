@@ -6,7 +6,7 @@ Input is a markdown/text file:
     (e.g. `# ENG`); any number of `#` and surrounding spaces are tolerated.
   - every other non-blank line is ONE person; a leading `- ` / `* ` bullet is
     stripped. Comma-separated names on a line are ALIASES of that one person and
-    all share that person's code (e.g. `Alex, Alex ABC` -> both `ENG01`).
+    all share that person's code (e.g. `Robin Lee, Robin` -> both `ENG01`).
   - the reserved header `# BLACKOUT` (case-insensitive) marks a group whose members
     emit PLAIN blackout strings (`- "term"` -> the default █████), NO code. Inside it,
     commas separate INDEPENDENT terms (not aliases) — so one names file can drive both
@@ -94,6 +94,32 @@ def format_keywords(text: str) -> tuple[str, list[str]]:
             out.append(f"    replace: {json.dumps(code, ensure_ascii=False)}")
 
     return "\n".join(out), warnings
+
+
+def find_duplicate_finds(text: str) -> list[str]:
+    """Return the find-terms that occur more than once, as a sorted list of lowercased
+    keys — the same case-insensitive dup key `format_keywords` and the redactor use.
+    Empty list = clean. Pure (no I/O). Mirrors `format_keywords` parsing: bullet strip,
+    `#` group headers, and comma-splitting (aliases in pseudonym groups and independent
+    terms in BLACKOUT both contribute one key per comma token)."""
+    from collections import Counter
+    counts: "Counter[str]" = Counter()
+    current: str | None = None
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        if line.startswith("#"):
+            current = line.lstrip("#").strip() or None
+            continue
+        if line[:2] in ("- ", "* "):
+            line = line[2:].strip()
+        if current is None:
+            continue
+        for term in (p.strip() for p in line.split(",")):
+            if term:
+                counts[term.lower()] += 1
+    return sorted(k for k, n in counts.items() if n > 1)
 
 
 # Managed-block markers for `--write` (matched as substrings — indent/surrounding text

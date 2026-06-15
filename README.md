@@ -6,7 +6,7 @@ A small collection of local-first command-line tools for working with files and 
 
 | Tool | What it does |
 |---|---|
-| [`redaction-tool`](tools/redaction-tool/) | Air-gapped PII redaction for Notion exports (names, emails, phones, etc.) across Markdown, HTML, PDF, and images. Uses spaCy + Presidio + on-device OCR. |
+| [`redaction-tool`](tools/redaction-tool/) | Air-gapped PII redaction for a folder of files (names, emails, phones, etc.) across Markdown, HTML, JSON, CSV, PDF, and images. Uses spaCy + Presidio + on-device OCR. |
 | [`convert-to-md`](tools/convert-to-md/) | Convert `.docx` and `.html` files to Markdown. |
 | [`find-duplicates`](tools/find-duplicates/) | Find duplicate files by content hash (not filename) and report them oldest → newest. |
 | [`find-files`](tools/find-files/) | Find files by extension, recursively. |
@@ -17,7 +17,7 @@ Each tool lives in its own folder under `tools/` with a README containing both a
 
 ## Requirements
 
-- Python 3.9+
+- Python 3.11+
 - macOS recommended (the redaction tool uses Apple Vision OCR with a Tesseract fallback); the plain file utilities are cross-platform.
 
 Most utilities run with no setup:

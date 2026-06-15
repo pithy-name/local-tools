@@ -52,21 +52,21 @@ pip install --quiet -r requirements.txt
 echo "✓ Packages installed"
 
 # ── 4. Download spaCy NLP model ───────────────────────────────────────────────
-# Reads the model name from config.yaml if present, falls back to en_core_web_lg
-SPACY_MODEL="en_core_web_lg"
+# Reads the model name from config.yaml if present, falls back to en_core_web_sm
+SPACY_MODEL="en_core_web_sm"
 if command -v python3 &>/dev/null && [ -f config.yaml ]; then
     SPACY_MODEL=$(python3 -c "
 import yaml, sys
 try:
     cfg = yaml.safe_load(open('config.yaml'))
-    print(cfg.get('spacy_model', 'en_core_web_lg'))
+    print(cfg.get('spacy_model', 'en_core_web_sm'))
 except:
-    print('en_core_web_lg')
+    print('en_core_web_sm')
 ")
 fi
 
 echo "→ Downloading spaCy model '${SPACY_MODEL}'…"
-echo "  (en_core_web_lg is ~750 MB — grab a coffee if this is your first run)"
+echo "  (en_core_web_sm ≈ 12 MB; en_core_web_lg ≈ 750 MB — first run downloads it)"
 python3 -m spacy download "${SPACY_MODEL}"
 echo "✓ spaCy model '${SPACY_MODEL}' ready"
 

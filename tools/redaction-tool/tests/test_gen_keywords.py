@@ -167,5 +167,41 @@ class TestUpdateConfigFile(unittest.TestCase):
             self.assertIn('"OLD"', (Path(d) / "config.yaml.bak").read_text())  # .bak = original
 
 
+class TestFindDuplicateFinds(unittest.TestCase):
+    """find_duplicate_finds(text) -> sorted lowercased find-terms that occur 2+ times
+    (the same dup key gen_keywords/the redactor use). Empty list = clean. Synthetic only."""
+
+    def test_clean_has_no_dupes(self):
+        self.assertEqual(gen_keywords.find_duplicate_finds("# ENG\nMary Bello\nJohn Smith\n"), [])
+
+    def test_exact_repeat_same_group(self):
+        self.assertEqual(
+            gen_keywords.find_duplicate_finds("# ENG\nMary Bello\nMary Bello\n"), ["mary bello"])
+
+    def test_cross_group_same_term(self):
+        # same name under two prefixes → would map to two different codes (real conflict)
+        self.assertEqual(
+            gen_keywords.find_duplicate_finds("# ENG\nMary Bello\n# MGR\nMary Bello\n"),
+            ["mary bello"])
+
+    def test_blackout_repeat(self):
+        # in BLACKOUT, commas are independent terms; the repeat is a dup
+        self.assertEqual(gen_keywords.find_duplicate_finds("# BLACKOUT\nAcme, Acme\n"), ["acme"])
+
+    def test_alias_vs_standalone(self):
+        self.assertEqual(
+            gen_keywords.find_duplicate_finds("# ENG\nMary, Mary Bello\n# MGR\nMary\n"), ["mary"])
+
+    def test_case_insensitive(self):
+        self.assertEqual(
+            gen_keywords.find_duplicate_finds("# ENG\nMary Bello\n# MGR\nmary bello\n"),
+            ["mary bello"])
+
+    def test_multiple_dupes_sorted(self):
+        out = gen_keywords.find_duplicate_finds(
+            "# ENG\nMary Bello\nMary Bello\n# MGR\nJohn Smith\nJohn Smith\n")
+        self.assertEqual(out, ["john smith", "mary bello"])
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -22,7 +22,7 @@ bash setup.sh    # picks python3.11, builds .venv, installs deps, downloads the 
 ```bash
 cp demo.config.yaml config.yaml    # then edit config.yaml with your terms
 ```
-The tool defaults to `config.yaml`, so `python redact.py <dir>` picks up your local config automatically. Keep your real names/addresses in `config.yaml` (never committed), not in `demo.config.yaml`. Choose the NER model via `spacy_model` (the size/accuracy trade-off is documented in `demo.config.yaml`); run `setup.sh` *after* creating `config.yaml` so it downloads the model you picked — otherwise it defaults to `en_core_web_lg`.
+The tool defaults to `config.yaml`, so `python redact.py <dir>` picks up your local config automatically. Keep your real names/addresses in `config.yaml` (never committed), not in `demo.config.yaml`. Choose the NER model via `spacy_model` (the size/accuracy trade-off is documented in `demo.config.yaml`); run `setup.sh` *after* creating `config.yaml` so it downloads whichever model you set there (default is small).
 
 <details><summary>Manual setup / non-macOS OCR</summary>
 
@@ -32,7 +32,7 @@ source .venv/bin/activate                  # activate it
 pip install -r requirements.txt            # install dependencies
 python -m spacy download en_core_web_sm    # download the NER model (match spacy_model in config.yaml)
 ```
-Non-macOS OCR: `brew install tesseract`, then uncomment `pytesseract` in `requirements.txt`. **Untested** — only Apple Vision OCR (macOS) has been verified; the Tesseract fallback path has not been exercised.
+Non-macOS OCR: `brew install tesseract`, uncomment `pytesseract` in `requirements.txt`, and keep `ocr.fallback_tesseract: true` (the default) in config. **Untested** — only Apple Vision OCR (macOS) has been verified; the Tesseract fallback path has not been exercised.
 </details>
 
 ## Redact a folder
@@ -192,6 +192,8 @@ python redact.py <folder> --config ner.yaml --dry-run # auto-detect, preview
 - `spacy_model` — which spaCy model NER loads (`en_core_web_sm` / `_md` / `_lg`); pick by the size/accuracy trade-off noted in `demo.config.yaml`.
 - `tight_image_boxes` — for image / scanned-PDF OCR, black only the matched **word** (Apple Vision per-range box, with whole-line fallback) instead of the whole OCR line (default `false` = conservative whole-line). Tighter, more readable redactions; digital PDFs are always tight regardless.
 - `report` — persist the end-of-run report to disk every run (default `false` = console only). `true` writes `<input_dir>/redaction-report.md`; a string path writes there instead. The `--report` flag overrides this for a single run. The report lists matched text — keep it local, never commit it.
+- `timestamp_outputs` — testing aid (default `false`). When `true`, each run suffixes a per-run timestamp (`YYYYMMDD-HHMMSS`) onto both the redacted dir and the default report file (`redacted-20260614-134507/`, `redaction-report-20260614-134507.md`), so repeated runs don't clobber each other. An explicit `report:` path is left as-is.
+- `names_file` — the names list `--full-throttle` reads (default `names.md`, resolved from the working directory). See below.
 
 ## Generating `custom_keywords` from a names list
 
@@ -250,16 +252,30 @@ python gen_keywords.py names.md --write config.yaml
 ```
 It backs up to `config.yaml.bak`, re-validates that the result still parses as YAML, and replaces atomically. If the markers are missing it refuses and tells you to add them (never guesses where to write). Keep any hand-added terms *outside* the markers — or put them in a `# BLACKOUT` group so `names.md` is the single source of truth.
 
+**One command for the whole pipeline — `--full-throttle`.** Once your `names.md` and the `gen_keywords` markers are set up, this runs all three steps on a folder in one shot:
+
+```bash
+python redact.py <dir> --full-throttle
+```
+1. **Dupe-check** `names_file` (config key, default `names.md`). If it has duplicate find-terms the redactor would reject, it **aborts before changing anything** and points you at `gen_keywords.py` to see which.
+2. **Propagate** the names into `config.yaml` (same `--write` splice — `.bak`, atomic, YAML-validated).
+3. **Redact** `<dir>` with the freshly-updated config.
+
+With `--dry-run`, steps 1–2 happen **in memory only** (your `config.yaml` is *not* modified) and nothing is redacted — but the report is still written, so you get a full preview of what the updated keyword list would catch. Composes with `--include`, `--report`, and `timestamp_outputs`.
+
+**Re-running is safe.** The tool never re-redacts its own output: when scanning a folder it skips any nested dir named `redacted` or `redacted-*` (and its own `redaction-report*.md`). So you can re-run the same folder after adding keywords — it re-processes your originals and catches the new terms without re-chewing the prior `redacted/` (or any `redacted-<timestamp>/`) into a nested mess. The one exception is deliberate: if you point the tool *directly at* a redacted folder (pass it as the input), it processes it — because you chose it. (Originals are always read-only; the tool never renames or modifies your source files.)
+
 ## After a run
 
 > **Reading the report:** every run ends with the same itemized report — `--dry-run` and a real run print identical bodies (the real run adds an `Output at:` line). Matches are grouped into **PATTERN MATCHES** (regex: emails, URLs, …), **MODEL ENTITIES** (spaCy NER: names, orgs, …), and **CUSTOM KEYWORDS** (blacked out vs. replaced), with per-group subtotals and a grand total. An empty category shows `none` (ran, matched nothing) or `N/A` (not engaged this run) with a `← reason`. The report lists matched text, so treat it as sensitive.
 >
-> **Presidio warning suppression:** the tool silences Presidio's per-entity `"Entity X is not mapped to a Presidio entity"` log lines (for spaCy types like `CARDINAL`, `MONEY`, `PRODUCT` that Presidio has no recognizer for). These are noise — the entities are filtered from output regardless — but the suppression uses a log-message filter, not Presidio's native `labels_to_ignore`. If you add a custom Presidio recognizer for one of those spaCy entity types and see unexpected behavior, disable the filter by commenting out the `_NoMappingFilter` block in `build_analyzer()`.
+> **Presidio warning suppression:** the tool silences Presidio's per-entity `"Entity X is not mapped to a Presidio entity"` log lines (for spaCy types like `CARDINAL`, `MONEY`, `PRODUCT` that Presidio has no recognizer for). These are noise — the entities are filtered from output regardless — but the suppression uses a log-message filter, not Presidio's native `labels_to_ignore`. If you add a custom Presidio recognizer for one of those spaCy entity types and see unexpected behavior, disable the filter by commenting out the `_BenignPresidioFilter` block in `build_analyzer()`.
 
 ```
 ────────────────────────────────────────────────────
   Total redactions : 15
   Markdown files   : 4
+  Plain text files : 0
   HTML files       : 2
   JSON files       : 4
   CSV files        : 2
@@ -277,7 +293,7 @@ It backs up to `config.yaml.bak`, re-validates that the result still parses as Y
     not copied: notes.xlsx
 ```
 
-...followed by the itemized report (the SAME report `--dry-run` prints, minus the `Output at:` line):
+...followed by the itemized report (the SAME report `--dry-run` prints, plus an `Output at: <dir>` line):
 
 ```
 ══════════════════════════════════════════════════════════════════
