@@ -1,6 +1,6 @@
 # redaction-tool — tests
 
-Dogfood test suite for `../redact.py`. Fixed mock corpus + expected redacted outputs + a written test plan you can run. Use it to verify the tool still behaves after any change (a manual golden test until it's automated).
+Test suite for `../redact.py`. Fixed mock corpus + expected redacted outputs + a written test plan you can run. Use it to verify the tool still behaves after any change (a manual golden test).
 
 ## What's here
 
@@ -13,9 +13,9 @@ Dogfood test suite for `../redact.py`. Fixed mock corpus + expected redacted out
 | `run-a-ner-only/` | Expected output — NER only. |
 | `run-b-with-keywords/` | Expected output — NER + custom_keywords. |
 
-## ⚠️ Before you commit this anywhere
+## ⚠️ Synthetic secrets in this directory
 
-`corpus/` and the `run-*` outputs contain **fake, synthetic** secret-shaped strings on purpose — `ghp_…` (GitHub-token shape), `sk-proj-…` (API-key shape), `postgres://admin:hunter2@…` (DSN). They are not real. But **gitleaks / secret scanners will flag them.** When you add gitleaks (Phase 2), allowlist this directory via `.gitleaksignore`.
+`corpus/` and the `run-*` outputs contain **fake, synthetic** secret-shaped strings on purpose — `ghp_…` (GitHub-token shape), `sk-proj-…` (API-key shape), `postgres://admin:hunter2@…` (DSN). They are not real. But **secret scanners (e.g. gitleaks) will flag them** — allowlist this directory via `.gitleaksignore`.
 
 ## What the corpus proves (ground-truth)
 
@@ -42,7 +42,7 @@ python3.11 -m venv "$DST/.venv"
 PY="$DST/.venv/bin/python"
 "$PY" -m pip install --upgrade pip
 "$PY" -m pip install -r "$DST/requirements.txt"
-"$PY" -m spacy download en_core_web_sm          # or en_core_web_lg for the accuracy run
+"$PY" -m spacy download en_core_web_sm          # or en_core_web_lg for the accuracy run (higher recall, noisier)
 
 # 2. run both passes against a COPY of the corpus
 cp -R corpus /tmp/redaction-dogfood/input
@@ -52,7 +52,7 @@ cp -R corpus /tmp/redaction-dogfood/input
 # 3. diff produced output against the expected run-*/ dirs in this folder
 ```
 
-For a true accuracy verdict, swap `en_core_web_sm` → `en_core_web_lg` (~750 MB) and re-score — the small model's misses are recall, not design.
+For a true accuracy verdict, swap `en_core_web_sm` → `en_core_web_lg` (~750 MB) and re-score — the small model's misses are recall, not design (lg raises recall but is noisier: more false positives).
 
 ## Walkthrough for non-technical readers
 

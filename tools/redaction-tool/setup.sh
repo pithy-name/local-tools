@@ -66,7 +66,7 @@ except:
 fi
 
 echo "→ Downloading spaCy model '${SPACY_MODEL}'…"
-echo "  (en_core_web_sm ≈ 12 MB; en_core_web_lg ≈ 750 MB — first run downloads it)"
+echo "  (first run downloads your configured model)"
 python3 -m spacy download "${SPACY_MODEL}"
 echo "✓ spaCy model '${SPACY_MODEL}' ready"
 

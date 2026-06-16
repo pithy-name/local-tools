@@ -14,7 +14,7 @@ A fully local, air-gapped PII redaction tool. Point it at a folder of files; it 
 ## Setup
 
 ```bash
-bash setup.sh    # picks python3.11, builds .venv, installs deps, downloads the spaCy model (once)
+bash setup.sh    # picks python3.11, builds .venv, installs deps, downloads your configured spaCy model (first run)
 ```
 
 **Then create your config** (one-time). `config.yaml` is gitignored — it's where your real redaction terms live — so the repo ships only the `demo.config.yaml` template. Copy it:
@@ -37,7 +37,7 @@ Non-macOS OCR: `brew install tesseract`, uncomment `pytesseract` in `requirement
 
 ## Redact a folder
 
-The tool runs on a **folder** (not a single file — that's a known TODO). Finish Setup, then:
+The tool runs on a **folder** (not a single file). Finish Setup, then:
 
 ```bash
 source .venv/bin/activate            # 0. activate the venv (once per terminal)
@@ -210,16 +210,16 @@ Jane Doe
 ```bash
 python gen_keywords.py names.md      # prints YAML to stdout; paste under custom_keywords:
 ```
-Numbers reset per group, zero-padded two-digit; aliases share one code:
+Each code is bracket-wrapped `[PREFIX-NN]`; numbers reset per group, zero-padded two-digit; aliases share one code:
 ```yaml
   - find: "Mary Bello"
-    replace: "ENG01"
+    replace: "[ENG-01]"
   - find: "Mary"
-    replace: "ENG01"
+    replace: "[ENG-01]"
   - find: "John Smith"
-    replace: "ENG02"
+    replace: "[ENG-02]"
   - find: "Jane Doe"
-    replace: "MGR01"
+    replace: "[MGR-01]"
 ```
 Comma is the alias delimiter (so a name *containing* a comma is read as two aliases). Duplicate finds get a stderr warning. Keep your names file out of git if it holds real names.
 

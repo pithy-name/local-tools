@@ -52,7 +52,7 @@ bash setup.sh
 # Manual equivalent (system python3 is 3.9 — too old; build with 3.11):
 python3.11 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt                  # click is pinned in requirements
-python -m spacy download en_core_web_lg
+python -m spacy download en_core_web_sm
 
 cp demo.config.yaml config.yaml                   # first run: make your local config
 python redact.py <dir> --dry-run                 # preview (no files written)

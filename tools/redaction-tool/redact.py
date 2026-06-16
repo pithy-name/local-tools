@@ -49,7 +49,7 @@ DEFAULT_CONFIG: dict = {
     ],
     "custom_keywords": [],       # exact strings to always redact (word-boundary match)
     "replacement": "█████",      # what replaced text looks like
-    "spacy_model": "en_core_web_sm",  # small/fast (~12MB) default; en_core_web_lg (~750MB) = higher recall but noisier (more false positives)
+    "spacy_model": "en_core_web_sm",  # small/fast default; en_core_web_lg = higher recall but noisier (more false positives)
     "output_dir": "redacted",    # created inside input_dir
     "copy_unhandled": False,     # leak guard: don't copy unhandled file types into redacted/
     "decode_nested_json": True,  # JSON string values that are themselves JSON (double-encoded

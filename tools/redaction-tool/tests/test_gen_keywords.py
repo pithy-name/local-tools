@@ -1,7 +1,7 @@
 """Tests for gen_keywords.py — a names list → custom_keywords YAML formatter.
 
 Input: a markdown/text file with `# PREFIX` group headers; one person per line;
-comma-separated aliases on a line all share that person's two-digit code.
+comma-separated aliases on a line all share that person's code (`[PREFIX-NN]`).
 
 All names below are synthetic placeholders (this file is published).
 
@@ -24,27 +24,27 @@ class TestGenKeywords(unittest.TestCase):
     def test_basic_per_person_numbering(self):
         out, warns = fmt("# ENG\nMary Bello\nJohn Smith\n")
         # Pin the 2-space indent so output pastes straight under `custom_keywords:`.
-        self.assertIn('  - find: "Mary Bello"\n    replace: "ENG01"', out)
-        self.assertIn('  - find: "John Smith"\n    replace: "ENG02"', out)
+        self.assertIn('  - find: "Mary Bello"\n    replace: "[ENG-01]"', out)
+        self.assertIn('  - find: "John Smith"\n    replace: "[ENG-02]"', out)
         self.assertEqual(warns, [])
 
     def test_aliases_share_one_code(self):
         out, _ = fmt("# ENG\nMary, Mary Bello\nJohn Smith\n")
-        self.assertIn('  - find: "Mary"\n    replace: "ENG01"', out)
-        self.assertIn('  - find: "Mary Bello"\n    replace: "ENG01"', out)  # same code
-        self.assertIn('  - find: "John Smith"\n    replace: "ENG02"', out)   # next person
+        self.assertIn('  - find: "Mary"\n    replace: "[ENG-01]"', out)
+        self.assertIn('  - find: "Mary Bello"\n    replace: "[ENG-01]"', out)  # same code
+        self.assertIn('  - find: "John Smith"\n    replace: "[ENG-02]"', out)   # next person
 
     def test_per_group_reset(self):
         out, _ = fmt("# ENG\nMary Bello\n# MGR\nJohn Smith\n")
-        self.assertIn('  - find: "Mary Bello"\n    replace: "ENG01"', out)
-        self.assertIn('  - find: "John Smith"\n    replace: "MGR01"', out)
+        self.assertIn('  - find: "Mary Bello"\n    replace: "[ENG-01]"', out)
+        self.assertIn('  - find: "John Smith"\n    replace: "[MGR-01]"', out)
 
     def test_two_digit_padding(self):
         names = "\n".join(f"P{i}" for i in range(1, 11))   # 10 synthetic people
         out, _ = fmt("# X\n" + names + "\n")
-        self.assertIn('replace: "X01"', out)
-        self.assertIn('replace: "X09"', out)
-        self.assertIn('replace: "X10"', out)
+        self.assertIn('replace: "[X-01]"', out)
+        self.assertIn('replace: "[X-09]"', out)
+        self.assertIn('replace: "[X-10]"', out)
 
     def test_strips_bullets_and_blank_lines(self):
         out, _ = fmt("# ENG\n\n- Mary Bello\n* John Smith\n")
@@ -65,14 +65,21 @@ class TestGenKeywords(unittest.TestCase):
         # Comma is the alias delimiter, so "Doe, John" is two aliases of ONE person
         # (both X01) — intended trade-off of choosing comma over a rarer delimiter.
         out, _ = fmt("# X\nDoe, John\n")
-        self.assertIn('  - find: "Doe"\n    replace: "X01"', out)
-        self.assertIn('  - find: "John"\n    replace: "X01"', out)
+        self.assertIn('  - find: "Doe"\n    replace: "[X-01]"', out)
+        self.assertIn('  - find: "John"\n    replace: "[X-01]"', out)
 
     def test_name_before_header_warns_and_skips(self):
         out, warns = fmt("Mary Bello\n# ENG\nJohn Smith\n")
         self.assertTrue(any("Mary Bello" in w for w in warns), warns)
         self.assertNotIn('- find: "Mary Bello"', out)                  # skipped
-        self.assertIn('- find: "John Smith"\n    replace: "ENG01"', out)   # still works
+        self.assertIn('- find: "John Smith"\n    replace: "[ENG-01]"', out)   # still works
+
+    def test_brackets_in_header_are_normalized(self):
+        # A header already wrapped in brackets (# [ENG]) is stripped and re-wrapped,
+        # so output is always [PREFIX-NN] — never doubled to [[ENG]-01].
+        out, _ = fmt("# [ENG]\nMary Bello\n")
+        self.assertIn('  - find: "Mary Bello"\n    replace: "[ENG-01]"', out)
+        self.assertNotIn("[[ENG]", out)
 
 
 class TestBlackoutGroup(unittest.TestCase):
@@ -106,7 +113,7 @@ class TestBlackoutGroup(unittest.TestCase):
 
     def test_blackout_and_pseudonym_groups_coexist(self):
         out, _ = fmt("# ENG\nMary Bello\n# BLACKOUT\nAcme Plaza, Beta Tower\n")
-        self.assertIn('  - find: "Mary Bello"\n    replace: "ENG01"', out)  # pseudonym intact
+        self.assertIn('  - find: "Mary Bello"\n    replace: "[ENG-01]"', out)  # pseudonym intact
         self.assertIn('  - "Acme Plaza"', out)                             # blackout plain
         self.assertIn('  - "Beta Tower"', out)
 

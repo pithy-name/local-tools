@@ -13,9 +13,12 @@ Input is a markdown/text file:
     pseudonyms and the blackout list.
 
 Output (stdout) is `custom_keywords` entries at 2-space indent, ready to paste
-under `custom_keywords:` in config.yaml. Numbers are two-digit, zero-padded, and
-reset per group. The config already supports many `find`s -> one `replace`
-(aliasing), so no config change is needed.
+under `custom_keywords:` in config.yaml. Each pseudonym code is bracket-wrapped as
+`[PREFIX-NN]` (e.g. `[ENG-01]`) — the bracket/number format is added HERE, so group
+headers can be bare (`# ENG`) or already-bracketed (`# [ENG]`); stray brackets are
+stripped before wrapping. Numbers are two-digit, zero-padded, and reset per group.
+The config already supports many `find`s -> one `replace` (aliasing), so no config
+change is needed.
 
   python gen_keywords.py names.md                       # print YAML to stdout
   python gen_keywords.py names.md --write config.yaml   # write in place between the
@@ -81,8 +84,12 @@ def format_keywords(text: str) -> tuple[str, list[str]]:
                 out.append(f"  - {json.dumps(term, ensure_ascii=False)}")
             continue
         # Pseudonym group: comma-separated names are ALIASES of one person -> one code.
+        # Bracket-wrap the code HERE (single source of truth for the format), so headers
+        # can be bare (`# ENG`) or already-bracketed (`# [ENG]`): strip stray brackets,
+        # then wrap -> `[ENG-01]`.
         counters[current] += 1
-        code = f"{current}{counters[current]:02d}"
+        prefix = current.strip("[] ")
+        code = f"[{prefix}-{counters[current]:02d}]"
         for alias in parts:
             key = alias.lower()
             if key in seen:
