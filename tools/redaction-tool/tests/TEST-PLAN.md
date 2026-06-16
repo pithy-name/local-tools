@@ -21,7 +21,7 @@ Two goals from one run:
 
 | Item | Value |
 |---|---|
-| Machine | MacBook Air M4, 16GB |
+| Machine | Apple Silicon Mac, 16GB |
 | spaCy model | Defaults to `en_core_web_sm` (small/fast). `en_core_web_lg` is available for higher recall, but noisier — more false positives. |
 | Network | Required once for install (PyPI + model). Runtime = offline. |
 
@@ -64,7 +64,7 @@ Full per-file ground-truth in **Appendix A** (used to score recall).
 |---|---|---|---|
 | GAP1 | Session IDs not detected by NER | grep `sess_…` in `.md` output (no keyword) | **Survives** (leak) unless added to custom_keywords |
 | GAP2 | API keys / tokens not detected | grep `sk-proj-…`, `ghp_…` | **Survives** (leak) |
-| GAP3 | Hardware specs not detected | grep `MacBook Air M4`, `16GB` | **Survives** unless custom_keywords |
+| GAP3 | Hardware specs not detected | grep `ThinkPad X1 Carbon`, `16GB` | **Survives** unless custom_keywords |
 | GAP4 | Codenames not detected by NER | grep `Project Falcon` (NER-only run) | **Survives** unless custom_keywords |
 | GAP5 | Code/text file *contents* not redacted | grep names/emails/secrets in copied `deploy.py`/`readme.txt` | **All survive** (copy-through) |
 
@@ -79,10 +79,10 @@ Full per-file ground-truth in **Appendix A** (used to score recall).
 
 ## Appendix A — Ground-truth (planted entities, for recall scoring)
 
-**meeting-notes.md** — PERSON: Sarah Chen, Marcus Webb, Priya Nair, Sarah, Marcus | EMAIL: sarah.chen@acmecorp.com, legal@acmecorp.com | PHONE: +1 (415) 555-0142 | ORG: Acme Corporation, Globex Industries, Globex | LOCATION: Berlin, San Francisco | GAP: `sk-proj-9f8a7b6c5d4e3f2a1b0c`, `sess_a1b2c3d4e5f6g7h8`, "MacBook Air M4, 16GB", "Project Falcon"
+**meeting-notes.md** — PERSON: Sarah Chen, Marcus Webb, Priya Nair, Sarah, Marcus | EMAIL: sarah.chen@acmecorp.com, legal@acmecorp.com | PHONE: +1 (415) 555-0142 | ORG: Acme Corporation, Globex Industries, Globex | LOCATION: Berlin, San Francisco | GAP: `sk-proj-9f8a7b6c5d4e3f2a1b0c`, `sess_a1b2c3d4e5f6g7h8`, "ThinkPad X1 Carbon, 16GB", "Project Falcon"
 
 **contact-page.html** — PERSON: Dr. Elena Vasquez, James O'Brien | EMAIL: elena.vasquez@globex.io, james.obrien@acmecorp.com | PHONE: +44 20 7946 0958 | ORG: Globex Industries | LOCATION: London, 221B Baker Street | GAP: hostname `workstation-m4-02`, IP `192.168.1.47` (IP_ADDRESS not in default entities)
 
 **deploy.py** (copy-through → everything leaks) — PERSON: Marcus Webb, Sarah Chen | EMAIL: marcus.webb@globex.io | PATH: `/Users/mwebb/projects/falcon` | SECRET: `ghp_AbC123…`, `postgres://admin:hunter2@…` | codename: Project Falcon
 
-**readme.txt** (copy-through → everything leaks) — PERSON: Priya Nair, Sarah Chen | EMAIL: priya.nair@acmecorp.com | PHONE: +1 (415) 555-0142 | HARDWARE: MacBook Air M4, 16GB | codename: Project Falcon
+**readme.txt** (copy-through → everything leaks) — PERSON: Priya Nair, Sarah Chen | EMAIL: priya.nair@acmecorp.com | PHONE: +1 (415) 555-0142 | HARDWARE: ThinkPad X1 Carbon, 16GB | codename: Project Falcon

@@ -8,7 +8,7 @@ Scratch workspace for local AI tooling experiments. Not a single project — a l
 
 No build system, no top-level package, no shared dependency manifest, no test runner. Each tool is self-contained in its own folder with its own README and (if needed) its own `.venv`. There is no monorepo glue — touching one tool does not affect another.
 
-Target machine: MacBook Air M4 (2025), 16GB unified RAM. Local-model ceiling is ~8–10B quantized (Q4/Q5) — keep this in mind for any model-selection work, especially `plans/local-ai-toolkit-prd.md`.
+Target machine: a 16GB Apple Silicon Mac. Local-model ceiling is ~8–10B quantized (Q4/Q5) — keep this in mind for any model-selection work, especially `plans/local-ai-toolkit-prd.md`.
 
 Git repository (`main` branch).
 
