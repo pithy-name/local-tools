@@ -63,7 +63,7 @@ class TestFullThrottle(unittest.TestCase):
         self.assertTrue(out.exists())
         red = out.read_text(encoding="utf-8")
         self.assertNotIn("Acme Corp", red)
-        self.assertIn("CO01", red)
+        self.assertIn("[CO-01]", red)
 
     def test_dry_run_inmemory_no_config_write_but_report_written(self):
         tmp, config, inp = self._scaffold("# CO\nAcme Corp\n# BLACKOUT\nSecret\n")
