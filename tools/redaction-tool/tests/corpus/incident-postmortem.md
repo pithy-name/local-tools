@@ -11,7 +11,7 @@ On 2026-03-12 a staging API key for **Project Falcon** was committed to the repo
 
 ## Timeline
 
-- **09:14** — Marcus Webb pushed the build from his MacBook Air M4, 16GB; the key `sk-proj-9f8a7b6c5d4e3f2a1b0c` landed in `deploy.py`.
+- **09:14** — Marcus Webb pushed the build from his ThinkPad X1 Carbon, 16GB; the key `sk-proj-9f8a7b6c5d4e3f2a1b0c` landed in `deploy.py`.
 - **09:52** — Alert fired to oncall@acmecorp.com; Priya Nair paged Sarah Chen at +1 (415) 555-0142.
 - **10:05** — Session `sess_a1b2c3d4e5f6g7h8` invalidated; DSN `postgres://admin:hunter2@prod-db-01.acmecorp.internal:5432/prod` rotated.
 - **10:40** — Host `prod-db-01` (10.0.4.12) confirmed clean from the San Francisco office.

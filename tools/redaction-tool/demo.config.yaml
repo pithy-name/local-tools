@@ -1,0 +1,156 @@
+# ── redact.py configuration ──────────────────────────────────────────────────
+# Edit this file, then run: python redact.py /path/to/folder
+
+# Named entity types Presidio/spaCy will detect automatically.
+# Regex types (work with regex_only: true, no model): EMAIL_ADDRESS, URL,
+#   PHONE_NUMBER, CREDIT_CARD, CRYPTO, IBAN_CODE, IP_ADDRESS, US_SSN,
+#   US_BANK_NUMBER, US_DRIVER_LICENSE, US_ITIN, US_PASSPORT, MEDICAL_LICENSE.
+# NER types (need the model, regex_only: false): PERSON, ORGANIZATION,
+#   LOCATION, NRP (nationality/religion/politics).
+entities:
+  - PERSON
+  - EMAIL_ADDRESS
+  - PHONE_NUMBER
+  - ORGANIZATION
+  - LOCATION
+
+# Exact strings to ALWAYS redact, regardless of NLP detection.
+# Uses word-boundary matching, CASE-INSENSITIVE.
+#
+# Tip: set `entities: []` above for KEYWORD-ONLY mode — deterministic
+# find->replace from this list, with NO spaCy model loaded for text-only input
+# (fast, auditable). See the README "Keyword-only mode" section.
+#
+# Two formats:
+#
+#   Plain string — replaced with the default replacement (█████):
+#     - "Contoso"
+#
+#   Find/replace mapping — replaced with your specific string:
+#     - find: "John Smith"
+#       replace: "J.S."
+#     - find: "Acme Corp"
+#       replace: "[CLIENT-A]"
+#
+# Mix and match freely. Good for:
+#   - Names NLP might miss → initials for traceability
+#   - Client names → anonymized codes you can track
+#   - Project codenames → generic labels
+#   - Internal product names → [REDACTED-PRODUCT]
+custom_keywords:
+  # - "Contoso"                        # plain: replaced with █████
+  # - find: "John Smith"               # mapped: replaced with initials
+  #   replace: "J.S."
+  # - find: "Acme Corp"
+  #   replace: "[CLIENT-A]"
+  # - find: "Project Phoenix"
+  #   replace: "[PROJECT-1]"
+
+# What redacted content is replaced with in output files.
+replacement: "█████"
+
+# spaCy model to use for NLP. Tradeoffs:
+#   en_core_web_sm  — small/fast, ~12 MB download  (default; recommended)
+#   en_core_web_md  — mid-size, ~43 MB download
+#   en_core_web_lg  — ~750 MB; higher recall but noisier (more false positives)
+# After changing, run: python -m spacy download <model_name>
+spacy_model: en_core_web_sm
+
+# Subfolder created inside your input folder for redacted output.
+# Your originals are NEVER modified.
+output_dir: redacted
+
+# Leak guard. When false (default), file types redact.py does NOT handle
+# (e.g. .zip, .xlsx, .docx) are LEFT IN THE SOURCE and reported as
+# "Not copied (unhandled)" — they are not placed in redacted/, since an
+# unredacted file in a folder named redacted/ looks safe and isn't. Set true to
+# mirror the input (copy unhandled files through unchanged).
+copy_unhandled: false
+
+# Nested-JSON decoding. Some JSON files store a whole document as an *escaped
+# JSON string* inside a field (double-encoded — e.g. rich-text editor "delta"
+# blobs like {"richText": "[{\"text\":\"…\"}]"}). When true (default), a string
+# value that is itself valid JSON is decoded, its inner text redacted, then
+# re-encoded — so the analyzer sees clean prose instead of NER-tagging the raw
+# markup as bogus entities, and the file round-trips. Set false to treat such
+# strings as opaque text (e.g. if you have prose that is coincidentally valid JSON).
+decode_nested_json: true
+
+# Regex-only mode. When true, the ~750 MB spaCy model is skipped entirely —
+# only regex-based entity types (EMAIL_ADDRESS, URL, PHONE_NUMBER, CREDIT_CARD, …)
+# and custom_keywords are matched. PERSON, ORGANIZATION, LOCATION, and other NER
+# types are ignored even if listed in `entities` above (MODEL ENTITIES → N/A in
+# the report). Use this for large JSON/text files where only emails, URLs, or
+# known keywords need redaction — cuts runtime from minutes to seconds.
+# NER types require regex_only: false (the default).
+regex_only: false
+
+# File types to exclude entirely — not processed, not copied to redacted/.
+# Useful for binary formats that can't be text-redacted (video, audio)
+# or types you want to keep out of downstream tools altogether.
+skip_extensions:
+  - .mp4
+  - .mov
+  - .m4v
+
+# Allowlist: a file is processed only if its extension is in this list AND redact.py has a
+# handler for it; anything else follows `copy_unhandled` above. `skip_extensions` is checked
+# first (it wins). Override per run with `--include .md,.txt`.
+# An EMPTY list disables the allowlist (every handled type is processed).
+# Handled types: text — .md .html .htm .json .csv; binary — .pdf .png .jpg .jpeg .gif .webp.
+# (`.pdf` is NOT skipped by default — PDFs are processed; add `.pdf` above to skip them.)
+include_extensions:
+  - .md
+  - .html
+  - .htm
+  - .json
+  - .csv
+  - .pdf
+  - .png
+  - .jpg
+  - .jpeg
+  - .gif
+  - .webp
+
+# Image redaction precision. When false (default), any OCR text LINE containing a
+# match is fully blacked out (conservative — guarantees coverage, but hides the whole
+# row). When true, only the matched WORD's box is blacked (Apple Vision per-range box),
+# falling back to the whole line when a tight box isn't available — so it never
+# under-redacts. Tighter, more readable output (review images regardless). Only affects
+# images + scanned-PDF pages; digital PDFs are always tight.
+tight_image_boxes: false
+
+# End-of-run report FILE. The unified report ALWAYS prints to the console (dry-run
+# and real run alike); this only controls whether it is ALSO saved to disk as markdown.
+# false (default) → console only. true → write <input_dir>/redaction-report.md.
+# A string path → write the report there instead. The CLI flag --report overrides this
+# for a single run (bare --report = default location; --report PATH = that path).
+# The report LISTS MATCHED TEXT (the PII it found) — keep it local, never commit it
+# (redaction-report*.md is gitignored, and the tool auto-skips it on later runs).
+report: false
+
+# Timestamped outputs (testing aid). When false (default), output goes to a stable
+# `redacted/` dir and `redaction-report.md`. When true, each run suffixes a per-run
+# timestamp (YYYYMMDD-HHMMSS) onto BOTH — e.g. `redacted-20260614-134507/` and
+# `redaction-report-20260614-134507.md` — so repeated test runs don't clobber each
+# other and a run's dir + report share one timestamp. An explicit `report:` path is
+# left as-is (only auto-derived names get the suffix).
+timestamp_outputs: false
+
+# Names file for --full-throttle. That flag dupe-checks this file, propagates it into
+# this config (via gen_keywords, between the gen_keywords markers), then redacts — all
+# in one command. Path resolves from the current working directory. Default: names.md.
+names_file: names.md
+
+ocr:
+  # Use Apple Vision (on-device, M-series Neural Engine). Recommended.
+  # Requires: pip install pyobjc-framework-Vision (included in requirements.txt)
+  use_apple_vision: true
+
+  # Fall back to Tesseract if Apple Vision is unavailable.
+  # Requires: brew install tesseract && pip install pytesseract
+  fallback_tesseract: true
+
+  # Resolution for rendering scanned PDF pages before OCR.
+  # Higher = better OCR accuracy but slower. 200 is a good default.
+  dpi: 200

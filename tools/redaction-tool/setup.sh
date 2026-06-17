@@ -10,26 +10,32 @@ echo "════════════════════════�
 echo "  redact.py — local setup"
 echo "═══════════════════════════════════════════════════"
 
-# ── 1. Python version check ───────────────────────────────────────────────────
-if ! command -v python3 &>/dev/null; then
-    echo "ERROR: python3 not found."
-    echo "Install Python via: brew install python"
+# ── 1. Pick a Python interpreter ──────────────────────────────────────────────
+# This tool is TESTED ON PYTHON 3.11 only (see the README). The system python3
+# on macOS is 3.9, which CANNOT install the spaCy stack (thinc >=8.3.12 needs
+# Python >=3.10), so we never use it. We prefer 3.11; a newer 3.x is accepted as
+# a fallback so a machine without 3.11 can still install.
+PY=""
+for cand in python3.11 python3.12 python3.13; do
+    if command -v "$cand" &>/dev/null; then PY="$cand"; break; fi
+done
+if [ -z "$PY" ]; then
+    echo "ERROR: need Python 3.11+ (this tool is tested on 3.11); none found."
+    echo "Install it with: brew install python@3.11"
     exit 1
 fi
-PYVER=$(python3 -c "import sys; print('%d.%d' % sys.version_info[:2])")
-PYMAJ=$(python3 -c "import sys; print(sys.version_info[0])")
-PYMIN=$(python3 -c "import sys; print(sys.version_info[1])")
-echo "✓ Python ${PYVER} found"
-
-if [ "$PYMAJ" -lt 3 ] || { [ "$PYMAJ" -eq 3 ] && [ "$PYMIN" -lt 9 ]; }; then
-    echo "ERROR: Python 3.9+ required (found ${PYVER})"
+PYVER=$("$PY" -c 'import sys; print("%d.%d" % sys.version_info[:2])')
+# Defensive floor check — guards against the probe list being widened later.
+if ! "$PY" -c 'import sys; sys.exit(0 if sys.version_info[:2] >= (3, 11) else 1)'; then
+    echo "ERROR: ${PY} is Python ${PYVER}; need >=3.11."
     exit 1
 fi
+echo "✓ Using ${PY} (Python ${PYVER})"
 
 # ── 2. Create virtualenv ──────────────────────────────────────────────────────
 if [ ! -d ".venv" ]; then
     echo "→ Creating virtual environment (.venv)…"
-    python3 -m venv .venv
+    "$PY" -m venv .venv
     echo "✓ Virtualenv created"
 else
     echo "✓ Virtualenv already exists"
@@ -46,21 +52,21 @@ pip install --quiet -r requirements.txt
 echo "✓ Packages installed"
 
 # ── 4. Download spaCy NLP model ───────────────────────────────────────────────
-# Reads the model name from config.yaml if present, falls back to en_core_web_lg
-SPACY_MODEL="en_core_web_lg"
+# Reads the model name from config.yaml if present, falls back to en_core_web_sm
+SPACY_MODEL="en_core_web_sm"
 if command -v python3 &>/dev/null && [ -f config.yaml ]; then
     SPACY_MODEL=$(python3 -c "
 import yaml, sys
 try:
     cfg = yaml.safe_load(open('config.yaml'))
-    print(cfg.get('spacy_model', 'en_core_web_lg'))
+    print(cfg.get('spacy_model', 'en_core_web_sm'))
 except:
-    print('en_core_web_lg')
+    print('en_core_web_sm')
 ")
 fi
 
 echo "→ Downloading spaCy model '${SPACY_MODEL}'…"
-echo "  (en_core_web_lg is ~750 MB — grab a coffee if this is your first run)"
+echo "  (first run downloads your configured model)"
 python3 -m spacy download "${SPACY_MODEL}"
 echo "✓ spaCy model '${SPACY_MODEL}' ready"
 
@@ -85,8 +91,8 @@ echo "  1. Edit config.yaml to add custom keywords"
 echo "  2. Activate the venv:  source .venv/bin/activate"
 echo ""
 echo "  Dry run (no files written — just shows what would be redacted):"
-echo "    python redact.py /path/to/your/notion-export --dry-run"
+echo "    python redact.py /path/to/your/folder --dry-run"
 echo ""
-echo "  Full redaction (output goes to notion-export/redacted/):"
-echo "    python redact.py /path/to/your/notion-export"
+echo "  Full redaction (output goes to <folder>/redacted/):"
+echo "    python redact.py /path/to/your/folder"
 echo "═══════════════════════════════════════════════════"

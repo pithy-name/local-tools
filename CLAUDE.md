@@ -8,14 +8,14 @@ Scratch workspace for local AI tooling experiments. Not a single project — a l
 
 No build system, no top-level package, no shared dependency manifest, no test runner. Each tool is self-contained in its own folder with its own README and (if needed) its own `.venv`. There is no monorepo glue — touching one tool does not affect another.
 
-Target machine: MacBook Air M4 (2025), 16GB unified RAM. Local-model ceiling is ~8–10B quantized (Q4/Q5) — keep this in mind for any model-selection work, especially `plans/local-ai-toolkit-prd.md`.
+Target machine: a 16GB Apple Silicon Mac. Local-model ceiling is ~8–10B quantized (Q4/Q5) — keep this in mind for any model-selection work, especially `plans/local-ai-toolkit-prd.md`.
 
 Git repository (`main` branch).
 
 ## Layout
 
 - `tools/` — runnable Python CLI tools, each in a kebab-case subfolder with README
-  - `redaction-tool/` — local PII redaction for Notion exports (spaCy + Presidio + Apple Vision OCR); has its own `.venv`, `setup.sh`, `requirements.txt`, `config.yaml`, and nested `CLAUDE.md`
+  - `redaction-tool/` — local PII redaction for a folder of files (spaCy + Presidio + Apple Vision OCR); has its own `.venv`, `setup.sh`, `requirements.txt`, nested `CLAUDE.md`, and `gen_keywords.py` (names-list → `custom_keywords` helper). Config: `demo.config.yaml` is the committed template; `config.yaml` (your real terms) is gitignored — `cp demo.config.yaml config.yaml` first.
   - `convert-to-md/` — `docx_to_md.py`, `html_to_md.py`
   - `find-duplicates/find_duplicates.py` — content-hash dedup; edit `TARGET_DIRECTORY` at top before running
   - `find-files/find_files.py` — `python find_files.py [directory] [extension]` (defaults: cwd, `.py`)
