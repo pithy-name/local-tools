@@ -71,6 +71,13 @@ DEFAULT_CONFIG: dict = {
     "tight_image_boxes": False,  # image OCR: black only the matched word's box (Apple Vision
                                  # per-range box, with whole-line fallback) instead of the whole
                                  # OCR line. Default off = conservative whole-line blackout.
+    "redact_filenames": False,   # opt-in: rename ALIASED custom_keyword matches in OUTPUT file +
+                                 # dir NAMES → their pseudonym (originals untouched). SUBSTRING match
+                                 # (filenames embed terms without word boundaries). PLAIN (no-alias)
+                                 # keywords are NOT renamed — they're flagged in the report +
+                                 # redacted/_filename-flags.txt. Renames → redacted/_filename-renames.txt.
+    "filename_min_match_len": 4, # filename matching skips keywords shorter than this (avoids 'ed'/'mark'
+                                 # false hits); skipped terms are surfaced in the report. Lower at your risk.
     "ocr": {
         "use_apple_vision": True,   # on-device Apple OCR (M-series Mac)
         "fallback_tesseract": True, # fall back to Tesseract if Vision unavailable
@@ -1013,6 +1020,24 @@ def run(input_dir: Path, cfg: dict, dry_run: bool, report_path: Optional[str] = 
                         for part in f.relative_to(input_dir).parts[:-1])
              and not _is_report_file(f.name)]
 
+    # Filename redaction (opt-in): plan the redacted OUTPUT names for the whole candidate
+    # tree up front — so collisions resolve globally and --dry-run previews exactly what a
+    # real run writes. Names match by SUBSTRING (filenames embed terms without word
+    # boundaries); originals are never renamed. See filename_redactor.py.
+    redact_filenames = bool(cfg.get("redact_filenames"))
+    fn_plan: dict = {}
+    fn_redactor = None
+    written_rels: list = []   # rels actually emitted to output (accurate stats + rename map)
+    if redact_filenames:
+        from filename_redactor import (
+            FilenameRedactor, plan_tree, summarize, render_rename_map,
+            collect_filename_flags, render_flags_file)
+        fn_redactor = FilenameRedactor(
+            normalize_keywords(cfg),
+            min_len=cfg.get("filename_min_match_len", 4))
+        fn_plan, _ = plan_tree(
+            [str(f.relative_to(input_dir)) for f in files], fn_redactor)
+
     # Keyword-only mode (entities empty) redacts text via the stdlib keyword_redactor
     # and loads the spaCy model ONLY when a config-enabled image/PDF is present —
     # images/PDF still need the analyzer for matching on OCR'd text. A text-only
@@ -1056,7 +1081,8 @@ def run(input_dir: Path, cfg: dict, dry_run: bool, report_path: Optional[str] = 
     error_files = []              # files that raised during processing
     for src in files:
         rel = src.relative_to(input_dir)
-        dst = output_dir / rel
+        out_rel = fn_plan.get(str(rel), str(rel)) if redact_filenames else str(rel)
+        dst = output_dir / out_rel
         ext = src.suffix.lower()
 
         try:
@@ -1066,6 +1092,7 @@ def run(input_dir: Path, cfg: dict, dry_run: bool, report_path: Optional[str] = 
             # discarded — so the report's grand_total never counts a failed file that
             # total_redactions excluded (keeps grand_total == total_redactions).
             file_collector: dict = {}
+            emitted = True   # cleared below if the file is skipped or left uncopied
             if ext in skip_exts:
                 log.debug(f"  SKIP {rel}")
                 stats["skip"] += 1
@@ -1074,6 +1101,8 @@ def run(input_dir: Path, cfg: dict, dry_run: bool, report_path: Optional[str] = 
                 # not in the allowlist → unhandled (leak guard / copy_unhandled)
                 if _copy_or_skip_unhandled(src, dst, cfg, dry_run, stats):
                     uncopied_paths.append(str(rel))
+                elif redact_filenames:
+                    written_rels.append(str(rel))   # copied → emitted to output
                 continue
             if ext == ".md":
                 n = process_markdown(src, dst, analyzer, cfg, kw_replacements, dry_run, kr=kr, collector=file_collector)
@@ -1121,11 +1150,14 @@ def run(input_dir: Path, cfg: dict, dry_run: bool, report_path: Optional[str] = 
                 # Allowlisted but no handler for this type → leak guard.
                 if _copy_or_skip_unhandled(src, dst, cfg, dry_run, stats):
                     uncopied_paths.append(str(rel))
+                    emitted = False   # left in source, not written to output
 
             # Reached only if no handler raised → commit this file's matches + tally.
             _merge_collector(collector, file_collector)
             if n:
                 files_with_matches += 1
+            if redact_filenames and emitted:
+                written_rels.append(str(rel))
 
         except Exception as exc:
             log.error(f"  ERR  {rel}: {exc}")
@@ -1194,10 +1226,31 @@ def run(input_dir: Path, cfg: dict, dry_run: bool, report_path: Optional[str] = 
                      + stats["csv"] + stats["pdf"] + stats["img"])
     title = "REDACTION PREVIEW (--dry-run)" if dry_run else "REDACTION COMPLETE"
     extensions = sorted(include_set) if include_set else None
+
+    # Filename-redaction summary — COUNTS ONLY (no original names) for the shared report.
+    # The old→new map DOES hold original names → write it inside the output tree only
+    # (a real run), never into the report. Same stats for dry-run and real (real==dry).
+    filename_stats = None
+    if redact_filenames:
+        filename_stats = summarize(written_rels, fn_plan, fn_redactor)
+        if not dry_run:
+            pairs = [(o, fn_plan[o]) for o in sorted(written_rels)
+                     if fn_plan.get(o, o) != o]
+            if pairs:
+                (output_dir / "_filename-renames.txt").write_text(
+                    render_rename_map(pairs), encoding="utf-8")
+            # Plain (no-alias) keywords aren't renamed → flag any that survive in an
+            # output name, so the user can alias or rename them. Holds names → local only.
+            flags = collect_filename_flags(written_rels, fn_plan, fn_redactor)
+            if flags:
+                (output_dir / "_filename-flags.txt").write_text(
+                    render_flags_file(flags), encoding="utf-8")
+
     report_text = render_redaction_report(
         rep, title=title, files_scanned=files_scanned,
         files_matched=files_with_matches, extensions=extensions,
         output_dir=None if dry_run else output_dir,
+        filename_stats=filename_stats,
     )
     log.info("\n" + report_text)
 
@@ -1235,7 +1288,8 @@ def run(input_dir: Path, cfg: dict, dry_run: bool, report_path: Optional[str] = 
             rep, title=title, files_scanned=files_scanned,
             files_matched=files_with_matches, extensions=extensions,
             output_dir=None if dry_run else output_dir, meta=meta,
-            heading=f"Redaction Report — {input_dir.name}", file_stats=file_stats)
+            heading=f"Redaction Report — {input_dir.name}", file_stats=file_stats,
+            filename_stats=filename_stats)
         default_report = (add_timestamp("redaction-report.md", ts) if use_ts
                           else "redaction-report.md")
         dest = (input_dir / default_report if report_path == ""

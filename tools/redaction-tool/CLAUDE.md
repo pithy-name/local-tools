@@ -27,7 +27,9 @@ so NER reads clean prose instead of tagging JSON markup as bogus entities. Fully
 generic (recurses any nesting depth; no field names assumed).
 
 Modules: `redact.py` (CLI + handlers), `keyword_redactor.py` (stdlib keyword
-engine), `report_format.py` (stdlib unified end-of-run report + scan report), `gen_keywords.py`
+engine), `filename_redactor.py` (stdlib substring engine for redacting keywords in
+output file/dir NAMES; opt-in `redact_filenames`), `report_format.py` (stdlib unified
+end-of-run report + scan report), `gen_keywords.py`
 (stdlib helper: a names list → `custom_keywords` YAML).
 
 ## Config files
@@ -80,6 +82,7 @@ scan/leak-guard logic) also run under system `python3`.
 - `include_extensions` is an enforced allowlist (only listed + handled types are processed); `--include .md,.txt` overrides it per run; `skip_extensions` is checked first
 - Re-runs never re-redact own output: a scan skips any nested dir named `redacted`/`redacted-*` (and `redaction-report*.md`), so re-running a folder after adding keywords is safe and won't nest prior output. Exception: pointing the tool *directly at* a `redacted-*` dir (as the input) processes it. Originals are read-only — never renamed/modified (`_is_own_output_dir`, redact.py)
 - `URL` entity (add to `entities`) → http(s) URLs redacted to `[URL]`
+- `redact_filenames: true` (opt-in, default off) → renames **aliased** `custom_keywords` (those with a `replace:` pseudonym) in output file + dir NAMES → the sanitized pseudonym (originals untouched). SUBSTRING match (not the content path's word-boundary), gated by `filename_min_match_len` (default 4). PLAIN (no-alias) keywords are NOT renamed (a █████ token is useless in a name) — any surviving in an output name are FLAGGED: counts in the report + `redacted/_filename-flags.txt`. Renames map → `redacted/_filename-renames.txt`. Both local files hold real names — never in the shareable report (counts-only FILENAME REDACTIONS section). NER never touches names. Engine: `filename_redactor.py` (stdlib)
 - Every run (dry-run AND real) prints the SAME unified report — PATTERN MATCHES (regex) / MODEL ENTITIES (NER) / CUSTOM KEYWORDS (blacked out vs replaced), per-group subtotals + grand total; the real run adds an `Output at:` line. Itemizes text and image/PDF matches alike
 
 ## Config
