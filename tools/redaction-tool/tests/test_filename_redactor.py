@@ -227,29 +227,36 @@ class TestRenderRenameMap(unittest.TestCase):
 
 
 class TestFilenameReportSection(unittest.TestCase):
-    """The FILENAME REDACTIONS report subsection — counts only, never old filenames."""
+    """The FILENAME REDACTIONS report subsection — itemizes old→new renames + plain-keyword
+    leaks (the report is already a keep-local PII doc, so names belong here like every
+    other section)."""
 
     def _empty_report(self):
         from report_format import build_redaction_report
         return build_redaction_report({}, [])
 
-    def test_section_renders_counts_including_flags(self):
+    def test_section_renders_counts(self):
         from report_format import render_redaction_report
         out = render_redaction_report(
             self._empty_report(), title="X", files_scanned=3, files_matched=1,
             filename_stats={"files_renamed": 2, "dirs_renamed": 1, "collisions": 0,
-                            "flagged_files": 1, "skipped_short": ["ed"]})
+                            "flagged_files": 1, "skipped_short": ["ed"],
+                            "renames": [], "flags": []})
         self.assertIn("FILENAME REDACTIONS", out)
         self.assertIn("Files renamed", out)
         self.assertIn("Plain-keyword leaks", out)
 
-    def test_section_never_contains_old_filenames(self):
+    def test_section_itemizes_old_to_new_and_flags(self):
         from report_format import render_redaction_report
         out = render_redaction_report(
-            self._empty_report(), title="X", files_scanned=1, files_matched=1,
+            self._empty_report(), title="X", files_scanned=2, files_matched=2,
             filename_stats={"files_renamed": 1, "dirs_renamed": 0, "collisions": 0,
-                            "flagged_files": 0, "skipped_short": []})
-        self.assertNotIn("asmith", out)
+                            "flagged_files": 1, "skipped_short": [],
+                            "renames": [("asmith_1on1.md", "PERSON_A_1on1.md")],
+                            "flags": [("notes/projectzeta_plan.txt", ["projectzeta"])]})
+        self.assertIn("asmith_1on1.md", out)       # old name shown
+        self.assertIn("PERSON_A_1on1.md", out)     # new name shown
+        self.assertIn("projectzeta", out)          # plain-keyword leak shown
 
     def test_section_absent_when_feature_off(self):
         from report_format import render_redaction_report

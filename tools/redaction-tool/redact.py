@@ -1233,15 +1233,18 @@ def run(input_dir: Path, cfg: dict, dry_run: bool, report_path: Optional[str] = 
     filename_stats = None
     if redact_filenames:
         filename_stats = summarize(written_rels, fn_plan, fn_redactor)
+        # old→new renames + plain-keyword leaks. Itemized in the report (already a
+        # keep-local PII doc) for BOTH dry-run and real (real==dry), and written to local
+        # files on a real run. Plain keywords aren't renamed — only flagged.
+        renames = [(o, fn_plan[o]) for o in sorted(written_rels)
+                   if fn_plan.get(o, o) != o]
+        flags = collect_filename_flags(written_rels, fn_plan, fn_redactor)
+        filename_stats["renames"] = renames
+        filename_stats["flags"] = flags
         if not dry_run:
-            pairs = [(o, fn_plan[o]) for o in sorted(written_rels)
-                     if fn_plan.get(o, o) != o]
-            if pairs:
+            if renames:
                 (output_dir / "_filename-renames.txt").write_text(
-                    render_rename_map(pairs), encoding="utf-8")
-            # Plain (no-alias) keywords aren't renamed → flag any that survive in an
-            # output name, so the user can alias or rename them. Holds names → local only.
-            flags = collect_filename_flags(written_rels, fn_plan, fn_redactor)
+                    render_rename_map(renames), encoding="utf-8")
             if flags:
                 (output_dir / "_filename-flags.txt").write_text(
                     render_flags_file(flags), encoding="utf-8")

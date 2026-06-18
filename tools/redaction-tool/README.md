@@ -209,20 +209,21 @@ Key differences from content redaction:
 - **Aliased keywords only.** Only `custom_keywords` with a `replace:` pseudonym are
   renamed (→ that pseudonym, sanitized to a filesystem-safe form: `[PERSON_A]` →
   `PERSON_A`). A **plain** keyword (no alias) is *not* renamed — a `█████` token is
-  useless in a filename — but if one survives in an output name it's **flagged** (a count
-  in the report + the specific names in `redacted/_filename-flags.txt`) so you can add an
-  alias or rename it by hand. NER is never used for names — keywords only.
+  useless in a filename — but if one survives in an output name it's **flagged** (listed
+  in the report and in `redacted/_filename-flags.txt`) so you can add an alias or rename it
+  by hand. NER is never used for names — keywords only.
 - **Substring, not word-boundary.** Names embed terms without spaces (`asmith_1on1`),
   so matching is case-insensitive *substring*. Terms shorter than `filename_min_match_len`
   (default `4`) are skipped — and listed in the report — so short keywords (`ed`, `mark`)
   don't mangle innocent names.
 - **Collisions** (two files redacting to one name) get a deterministic `__2`, `__3` suffix.
 
-`--dry-run` previews the outcome (the report's **FILENAME REDACTIONS** section shows
-counts only — never names). A real run also writes the old→new rename map to
-`redacted/_filename-renames.txt` and any leaks to `_filename-flags.txt`; both list real
-names, so they stay inside the local output and never go in the shareable report. Always
-dry-run first and review.
+`--dry-run` previews the outcome. The report's **FILENAME REDACTIONS** section **itemizes**
+the old→new renames and any plain-keyword leaks — the report already lists matched PII in
+full and carries a "keep local, do not commit" banner, so names belong there like every
+other section. A real run additionally writes machine-readable companions inside `redacted/`:
+`_filename-renames.txt` (old→new) and `_filename-flags.txt` (leaks). All of these hold real
+names — keep them local. Always dry-run first and review.
 
 ## Generating `custom_keywords` from a names list
 

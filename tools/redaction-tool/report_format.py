@@ -245,19 +245,34 @@ def _render_replaced(lines, groups) -> None:
 
 
 def _render_filename_section(lines, stats) -> None:
-    """COUNTS-ONLY filename-redaction summary. Never prints original filenames —
-    those live solely in the local `_filename-renames.txt` (old names are PII)."""
+    """Filename-redaction summary. The end-of-run report is already a keep-local PII doc
+    (it lists matched text in full), so old→new names and plain-keyword leaks are itemized
+    here too — and ALSO written to redacted/_filename-renames.txt + _filename-flags.txt."""
     lines.append("FILENAME REDACTIONS")
     lines.append(_THIN)
     lines.append(f"    Files renamed      : {stats.get('files_renamed', 0)}")
     lines.append(f"    Dir parts renamed  : {stats.get('dirs_renamed', 0)}")
     lines.append(f"    Collisions resolved: {stats.get('collisions', 0)}")
-    flagged = stats.get("flagged_files", 0)
-    fnote = "  ← not renamed (no alias); see _filename-flags.txt" if flagged else ""
-    lines.append(f"    Plain-keyword leaks: {flagged}{fnote}")
+    lines.append(f"    Plain-keyword leaks: {stats.get('flagged_files', 0)}")
     skipped = stats.get("skipped_short") or []
     note = f"  ← below filename_min_match_len: {', '.join(skipped)}" if skipped else ""
     lines.append(f"    Short terms skipped: {len(skipped)}{note}")
+
+    renames = stats.get("renames") or []
+    if renames:
+        lines.append("")
+        lines.append("    Renamed (old → new):")
+        w = max(len(o) for o, _ in renames)
+        for old, new in renames:
+            lines.append(f"      {old.ljust(w)}  → {new}")
+
+    flags = stats.get("flags") or []
+    if flags:
+        lines.append("")
+        lines.append("    Plain-keyword leaks (no alias — add one or rename by hand):")
+        w = max(len(n) for n, _ in flags)
+        for name, terms in flags:
+            lines.append(f"      {name.ljust(w)}  ← {', '.join(terms)}")
     lines.append("")
 
 
@@ -380,7 +395,7 @@ def render_markdown_report(report, *, title, files_scanned, files_matched,
 
     return (
         f"# {heading or title}\n\n"
-        "> ⚠️ **SENSITIVE — contains real PII.** Lists matched emails, names, and URLs in full.\n"
+        "> ⚠️ **SENSITIVE — contains real PII.** Lists matched emails, names, URLs, and original filenames in full.\n"
         "> Keep it local: do NOT commit it, and do NOT place it inside `redacted/`.\n\n"
         f"{meta_block}"
         "## Summary\n\n"
