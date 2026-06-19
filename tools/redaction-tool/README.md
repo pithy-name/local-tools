@@ -191,9 +191,39 @@ python redact.py <folder> --config ner.yaml --dry-run # auto-detect, preview
 - `regex_only` — skip the spaCy model entirely; redact only the **regex types you list in `entities`** + `custom_keywords` (default `false`). NER types in `entities` are silently skipped when `true`.
 - `spacy_model` — which spaCy model NER loads (`en_core_web_sm` / `_md` / `_lg`); pick by the size/accuracy trade-off noted in `demo.config.yaml`.
 - `tight_image_boxes` — for image / scanned-PDF OCR, black only the matched **word** (Apple Vision per-range box, with whole-line fallback) instead of the whole OCR line (default `false` = conservative whole-line). Tighter, more readable redactions; digital PDFs are always tight regardless.
+- `redact_filenames` — rename **aliased** `custom_keywords` in output **file and directory names** → their pseudonym (default `false`; originals never renamed; plain no-alias keywords are flagged, not renamed). See "Redacting filenames" below. Paired knob: `filename_min_match_len` (skip keywords shorter than this in names; default `4`).
 - `report` — persist the end-of-run report to disk every run (default `false` = console only). `true` writes `<input_dir>/redaction-report.md`; a string path writes there instead. The `--report` flag overrides this for a single run. The report lists matched text — keep it local, never commit it.
 - `timestamp_outputs` — testing aid (default `false`). When `true`, each run suffixes a per-run timestamp (`YYYYMMDD-HHMMSS`) onto both the redacted dir and the default report file (`redacted-20260614-134507/`, `redaction-report-20260614-134507.md`), so repeated runs don't clobber each other. An explicit `report:` path is left as-is.
 - `names_file` — the names list `--full-throttle` reads (default `names.md`, resolved from the working directory). See below.
+
+## Redacting filenames
+
+By default the tool redacts file *contents* but writes output under the **original
+filenames** — so a keyword in a name (`asmith_1on1.png`, `projectzeta_plan.md`) still
+leaks even when the file's text is clean. Set `redact_filenames: true` to also redact
+output file **and** directory names. Originals are never renamed; only the copies under
+`redacted/` get new names.
+
+Key differences from content redaction:
+
+- **Aliased keywords only.** Only `custom_keywords` with a `replace:` pseudonym are
+  renamed (→ that pseudonym, sanitized to a filesystem-safe form: `[PERSON_A]` →
+  `PERSON_A`). A **plain** keyword (no alias) is *not* renamed — a `█████` token is
+  useless in a filename — but if one survives in an output name it's **flagged** (listed
+  in the report and in `redacted/_filename-flags.txt`) so you can add an alias or rename it
+  by hand. NER is never used for names — keywords only.
+- **Substring, not word-boundary.** Names embed terms without spaces (`asmith_1on1`),
+  so matching is case-insensitive *substring*. Terms shorter than `filename_min_match_len`
+  (default `4`) are skipped — and listed in the report — so short keywords (`ed`, `mark`)
+  don't mangle innocent names.
+- **Collisions** (two files redacting to one name) get a deterministic `__2`, `__3` suffix.
+
+`--dry-run` previews the outcome. The report's **FILENAME REDACTIONS** section **itemizes**
+the old→new renames and any plain-keyword leaks — the report already lists matched PII in
+full and carries a "keep local, do not commit" banner, so names belong there like every
+other section. A real run additionally writes machine-readable companions inside `redacted/`:
+`_filename-renames.txt` (old→new) and `_filename-flags.txt` (leaks). All of these hold real
+names — keep them local. Always dry-run first and review.
 
 ## Generating `custom_keywords` from a names list
 

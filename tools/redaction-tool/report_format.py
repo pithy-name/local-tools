@@ -244,13 +244,50 @@ def _render_replaced(lines, groups) -> None:
             lines.append(f"    {row['text'].ljust(28)} ×{row['count']}")
 
 
+def _render_filename_section(lines, stats) -> None:
+    """Filename-redaction summary. The end-of-run report is already a keep-local PII doc
+    (it lists matched text in full), so old→new names and plain-keyword leaks are itemized
+    here too — and ALSO written to redacted/_filename-renames.txt + _filename-flags.txt."""
+    lines.append("FILENAME REDACTIONS")
+    lines.append(_THIN)
+    lines.append(f"    Files renamed      : {stats.get('files_renamed', 0)}")
+    lines.append(f"    Dir parts renamed  : {stats.get('dirs_renamed', 0)}")
+    lines.append(f"    Collisions resolved: {stats.get('collisions', 0)}")
+    lines.append(f"    Plain-keyword leaks: {stats.get('flagged_files', 0)}")
+    skipped = stats.get("skipped_short") or []
+    note = f"  ← below filename_min_match_len: {', '.join(skipped)}" if skipped else ""
+    lines.append(f"    Short terms skipped: {len(skipped)}{note}")
+
+    renames = stats.get("renames") or []
+    if renames:
+        lines.append("")
+        lines.append("    Renamed (old → new):")
+        w = max(len(o) for o, _ in renames)
+        for old, new in renames:
+            lines.append(f"      {old.ljust(w)}  → {new}")
+
+    flags = stats.get("flags") or []
+    if flags:
+        lines.append("")
+        lines.append("    Plain-keyword leaks (no alias — add one or rename by hand):")
+        w = max(len(n) for n, _ in flags)
+        for name, terms in flags:
+            lines.append(f"      {name.ljust(w)}  ← {', '.join(terms)}")
+    lines.append("")
+
+
 def render_redaction_report(report, *, title, files_scanned, files_matched,
-                            extensions=None, output_dir=None) -> str:
+                            extensions=None, output_dir=None,
+                            filename_stats=None) -> str:
     """Render build_redaction_report() output as text.
 
     title: "REDACTION PREVIEW (--dry-run)" or "REDACTION COMPLETE".
     output_dir: when set (a real run), adds an "Output at:" line — the ONLY body
     difference from a dry-run; everything from PATTERN MATCHES down is identical.
+    filename_stats: when set (redact_filenames engaged), adds a counts-only
+    FILENAME REDACTIONS section — identical in dry-run and real runs (the caller
+    passes the same stats to both, preserving the real==dry requirement). None when
+    the feature is off → section omitted.
     """
     ext_str = ", ".join(extensions) if extensions else "(all configured)"
     lines = [_RULE, f"  {title}"]
@@ -296,6 +333,9 @@ def render_redaction_report(report, *, title, files_scanned, files_matched,
         _render_empty(lines, eng, "replaced")
     lines.append("")
 
+    if filename_stats is not None:
+        _render_filename_section(lines, filename_stats)
+
     lines.append(_TOTAL_RULE)
     lines.append(
         f"  GRAND TOTAL: {report['grand_total']} redactions "
@@ -306,7 +346,7 @@ def render_redaction_report(report, *, title, files_scanned, files_matched,
 
 def render_markdown_report(report, *, title, files_scanned, files_matched,
                            extensions=None, output_dir=None, meta=None,
-                           heading=None, file_stats=None) -> str:
+                           heading=None, file_stats=None, filename_stats=None) -> str:
     """Render the report as a self-contained markdown doc (for `redact.py --report`):
     a folder-named H1, a two-line SENSITIVE keep-local banner, optional caller-supplied
     `meta` bullets (mode/entities/timestamp/…), a Summary table (file-type counts from
@@ -327,7 +367,8 @@ def render_markdown_report(report, *, title, files_scanned, files_matched,
     """
     itemized = render_redaction_report(
         report, title=title, files_scanned=files_scanned,
-        files_matched=files_matched, extensions=extensions, output_dir=output_dir)
+        files_matched=files_matched, extensions=extensions, output_dir=output_dir,
+        filename_stats=filename_stats)
 
     rows = ["| Metric | Value |", "|---|---|",
             f"| Files scanned · with matches | {files_scanned} · {files_matched} |"]
@@ -354,7 +395,7 @@ def render_markdown_report(report, *, title, files_scanned, files_matched,
 
     return (
         f"# {heading or title}\n\n"
-        "> ⚠️ **SENSITIVE — contains real PII.** Lists matched emails, names, and URLs in full.\n"
+        "> ⚠️ **SENSITIVE — contains real PII.** Lists matched emails, names, URLs, and original filenames in full.\n"
         "> Keep it local: do NOT commit it, and do NOT place it inside `redacted/`.\n\n"
         f"{meta_block}"
         "## Summary\n\n"

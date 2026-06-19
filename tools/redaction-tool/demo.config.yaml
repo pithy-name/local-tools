@@ -120,6 +120,23 @@ include_extensions:
 # images + scanned-PDF pages; digital PDFs are always tight.
 tight_image_boxes: false
 
+# Filename redaction (opt-in). When false (default), output files keep their ORIGINAL
+# names, so a keyword in a filename (a person's name, a codename) LEAKS even though the
+# file's contents are redacted. When true, custom_keywords that have an ALIAS (a `replace:`
+# pseudonym) are applied to output file + directory NAMES → the pseudonym (originals are
+# never renamed). Matching is SUBSTRING, case-insensitive (filenames embed terms without
+# word boundaries, e.g. `asmith_1on1.png`) — UNLIKE content matching, which is word-boundary.
+# PLAIN keywords (no alias, blacked out in content) are NOT renamed — a █████ token is
+# useless in a filename — but any that survive in an output name are FLAGGED so you can
+# alias or rename them. The end-of-run report ITEMIZES the old→new renames + leaks (it
+# already lists matched PII in full and is marked keep-local). A real run also writes
+# machine-readable companions: `<output_dir>/_filename-renames.txt` + `_filename-flags.txt`
+# (both hold real names — keep local).
+redact_filenames: false
+# Filename matching skips keywords shorter than this many characters, so short terms
+# (`ed`, `mark`) don't mangle innocent names; skipped terms are listed in the report.
+filename_min_match_len: 4
+
 # End-of-run report FILE. The unified report ALWAYS prints to the console (dry-run
 # and real run alike); this only controls whether it is ALSO saved to disk as markdown.
 # false (default) → console only. true → write <input_dir>/redaction-report.md.
