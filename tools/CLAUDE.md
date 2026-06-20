@@ -13,3 +13,5 @@ python3 convert-to-md/docx_to_md.py <file.docx>               # also html_to_md.
 ```
 
 `redaction-tool/` has its own venv + nested `CLAUDE.md` — see there.
+
+`migrate-cowork-sessions/` has its own nested `CLAUDE.md` — see there. Stdlib only (no venv); requires `.env` setup (see `demo.env` template).
