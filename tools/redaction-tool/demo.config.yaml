@@ -7,6 +7,10 @@
 #   US_BANK_NUMBER, US_DRIVER_LICENSE, US_ITIN, US_PASSPORT, MEDICAL_LICENSE.
 # NER types (need the model, regex_only: false): PERSON, ORGANIZATION,
 #   LOCATION, NRP (nationality/religion/politics).
+# Add URL to redact http(s) links → a domain-aware [<domain> URL] token (e.g.
+#   [notion URL]; a keyword domain uses its alias; unknown → plain [URL]). In HTML the
+#   <a href> becomes plain [URL] and the label is appended to descriptive link text.
+#   See the README "Redacting URLs" section.
 entities:
   - PERSON
   - EMAIL_ADDRESS

@@ -182,7 +182,7 @@ python redact.py <folder> --config ner.yaml --dry-run # auto-detect, preview
 - `entities` — entity types to detect; `[]` = keyword-only (see the mode table).
   - **Regex types** (work with `regex_only: true`, no model): `EMAIL_ADDRESS, URL, PHONE_NUMBER, CREDIT_CARD, CRYPTO, IBAN_CODE, IP_ADDRESS, US_SSN, US_BANK_NUMBER, US_DRIVER_LICENSE, US_ITIN, US_PASSPORT, MEDICAL_LICENSE`.
   - **NER types** (need the model, i.e. `regex_only: false`): `PERSON, ORGANIZATION, LOCATION, NRP`.
-  - Add `URL` to redact http(s) URLs to `[URL]`.
+  - Add `URL` to redact http(s) URLs to a domain-aware `[<domain> URL]` token (e.g. `[notion URL]`; a keyword domain uses its alias; unknown → plain `[URL]`). See "Redacting URLs" below.
 - `custom_keywords` — exact strings to always redact; plain (`█████`) or `find:`/`replace:` for your own pseudonyms. Generate this list from a names file with `gen_keywords.py` (below).
 - `decode_nested_json` — decode double-encoded JSON string values (rich-text "delta" blobs) so the analyzer reads clean text instead of NER-tagging markup (default `true`).
 - `include_extensions` — allowlist of types to process; override per run with `--include .md,.txt`.
@@ -224,6 +224,33 @@ full and carries a "keep local, do not commit" banner, so names belong there lik
 other section. A real run additionally writes machine-readable companions inside `redacted/`:
 `_filename-renames.txt` (old→new) and `_filename-flags.txt` (leaks). All of these hold real
 names — keep them local. Always dry-run first and review.
+
+## Redacting URLs
+
+Add `URL` to `entities` to redact http(s) URLs. Instead of a flat `[URL]`, the token is
+**domain-aware** — it keeps the *service* as context while dropping the identifying path
+and IDs:
+
+| Where | Input | Output |
+|---|---|---|
+| Bare URL in text | `see https://notion.so/QA-1508ab04` | `see [notion URL]` |
+| Keyword domain (`atlassian` → `[FOO-26]`) | `https://acme.atlassian.net/QQ-42` | `[FOO-26 URL]` |
+| Unknown / unparseable | — | `[URL]` |
+
+The label is the URL's **registrable domain**, verbatim-lowercase (`acme.atlassian.net` →
+`atlassian`, ignoring subdomains); if that domain is one of your `custom_keywords`, its
+alias is used instead.
+
+**In HTML links**, the visible text is preserved and the label is appended for context,
+while the `href` attribute is redacted to a plain `[URL]`:
+
+| Input | Output |
+|---|---|
+| `<a href="https://notion.so/x">QA Sync Notes</a>` | `<a href="[URL]">QA Sync Notes [notion URL]</a>` |
+| `<a href="https://notion.so/x">https://notion.so/x</a>` | `<a href="[URL]">[notion URL]</a>` |
+
+Every `<a href>` is scrubbed (not just `mailto:` links). Known limit: the registrable-domain
+is a heuristic — multi-part TLDs (`.co.uk`) are not special-cased and may mislabel.
 
 ## Generating `custom_keywords` from a names list
 

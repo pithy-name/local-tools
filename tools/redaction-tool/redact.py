@@ -279,6 +279,41 @@ def _silence_benign_presidio_warnings() -> None:
 URL_REGEX = r"(?i)https?://\S+"
 
 
+def _registrable_label(host: str) -> str:
+    """The service-identifying word of a hostname: the registrable domain's main
+    label (second-to-last dotted segment), ignoring subdomains. acme.atlassian.net
+    → atlassian, notion.so → notion, random-co.com → random-co. Heuristic — multi-part
+    TLDs (.co.uk) are not special-cased."""
+    host = re.sub(r"[^a-z0-9.-]+$", "", (host or "").lower())  # strip trailing junk
+    parts = [p for p in host.split(".") if p]
+    if len(parts) >= 2:
+        return parts[-2]
+    return parts[0] if parts else ""
+
+
+def url_token(url: str, keyword_redact=None) -> str:
+    """Domain-aware replacement for a redacted URL: `[<Label> URL]`, where Label is the
+    URL's registrable domain (capitalized) — or, if that domain is a custom keyword, its
+    alias (via the optional keyword_redact callable). Non-http(s) / unparseable → `[URL]`,
+    so nothing beyond the chosen service label is ever leaked."""
+    from urllib.parse import urlparse
+    try:
+        p = urlparse((url or "").strip())
+    except ValueError:
+        return "[URL]"
+    if p.scheme not in ("http", "https") or not p.hostname:
+        return "[URL]"
+    label = _registrable_label(p.hostname)
+    if not label:
+        return "[URL]"
+    if keyword_redact is not None:
+        aliased = keyword_redact(label)
+        if aliased != label:                          # domain is a keyword → use its alias
+            inner = aliased.strip("[]").strip() or label
+            return f"[{inner} URL]"
+    return f"[{label} URL]"                            # verbatim (already lowercased)
+
+
 def _register_url_recognizer(analyzer, cfg: dict, kw_replacements: dict) -> bool:
     """Opt-in blanket URL redaction. When 'URL' is listed in `entities`, register a
     recognizer for the URL pattern and map the URL entity to the literal '[URL]'
@@ -463,12 +498,15 @@ def anonymize(
     results: list,
     default_replacement: str,
     kw_replacements: Optional[dict] = None,
+    url_label_fn=None,
 ) -> str:
     """
     Replace detected spans with their appropriate replacement.
     Custom keywords (KW_N) use their configured string if set; everything else
     uses default_replacement. Processes spans high→low to keep offsets valid.
     Overlapping/contained spans: the longer (outer) span wins; the shorter is dropped.
+    url_label_fn, when set, computes a URL span's replacement from its matched text
+    (domain-aware `[<Label> URL]`) instead of the fixed kw_replacements["URL"] token.
     """
     if not results:
         return text
@@ -476,20 +514,46 @@ def anonymize(
     kept = _deoverlap(results)
     buf = list(text)
     for r in sorted(kept, key=lambda r: r.start, reverse=True):
-        per_entity = kw_replacements.get(r.entity_type)  # None if not a KW entity
-        replacement = per_entity if per_entity is not None else default_replacement
+        if r.entity_type == "URL" and url_label_fn is not None:
+            replacement = url_label_fn(text[r.start:r.end])
+        else:
+            per_entity = kw_replacements.get(r.entity_type)  # None if not a KW entity
+            replacement = per_entity if per_entity is not None else default_replacement
         buf[r.start:r.end] = list(replacement)
     return "".join(buf)
 
 
+def _get_domain_kw_redact(cfg: dict):
+    """Cached keyword-redact callable for aliasing URL DOMAINS (a separate KeywordRedactor
+    so its match counts never pollute the report). None when no custom keywords."""
+    if "_domain_kw_redact" not in cfg:
+        kr = make_keyword_redactor_from_config(cfg)
+        cfg["_domain_kw_redact"] = kr.redact if kr.mappings else None
+    return cfg["_domain_kw_redact"]
+
+
+def _make_url_label_fn(cfg: dict):
+    """Cached `lambda url -> "[<Label> URL]"` when URL redaction is active, else None."""
+    if "_url_label_fn" not in cfg:
+        if "URL" in (cfg.get("entities") or []):
+            kwfn = _get_domain_kw_redact(cfg)
+            cfg["_url_label_fn"] = lambda u: url_token(u, kwfn)
+        else:
+            cfg["_url_label_fn"] = None
+    return cfg["_url_label_fn"]
+
+
 # ── Text file handlers ────────────────────────────────────────────────────────
 
-def _redact_text(text, analyzer, cfg: dict, kw_replacements: dict, kr, collector=None) -> tuple:
+def _redact_text(text, analyzer, cfg: dict, kw_replacements: dict, kr, collector=None,
+                 label_urls=True) -> tuple:
     """Redact one string → (redacted, n_swaps).
 
     kr (a keyword_redactor.KeywordRedactor, keyword-only mode) wins when set —
     no spaCy. Otherwise the NER+keyword analyzer path. n_swaps is per-call.
     collector, when set, accumulates {entity_type: {text: count}} for dry-run reporting.
+    label_urls: when True (default), redacted URLs become domain-aware `[<Label> URL]`;
+    pass False (e.g. for an <a href> attribute) to fall back to the plain `[URL]` token.
     """
     if kr is not None:
         before = sum(kr.counts.values())
@@ -504,7 +568,9 @@ def _redact_text(text, analyzer, cfg: dict, kw_replacements: dict, kr, collector
             entity_text = text[r.start:r.end]
             bucket = collector.setdefault(r.entity_type, {})
             bucket[entity_text] = bucket.get(entity_text, 0) + 1
-    return anonymize(text, kept, cfg["replacement"], kw_replacements), len(kept)
+    url_label_fn = _make_url_label_fn(cfg) if label_urls else None
+    return anonymize(text, kept, cfg["replacement"], kw_replacements,
+                     url_label_fn=url_label_fn), len(kept)
 
 
 def process_markdown(
@@ -530,7 +596,11 @@ def process_html(
     total = 0
     SKIP_TAGS = {"script", "style", "code", "pre"}
 
-    # Redact visible text nodes
+    # Snapshot each link's ORIGINAL visible text before redaction, so we can tell a
+    # descriptive label ("QA Notes") from a link whose text WAS the URL.
+    orig_link_text = {id(t): t.get_text() for t in soup.find_all("a", href=True)}
+
+    # Redact visible text nodes (a URL appearing AS text → its [<Label> URL] token).
     for node in soup.find_all(string=True):
         if node.parent and node.parent.name in SKIP_TAGS:
             continue
@@ -540,13 +610,21 @@ def process_html(
         if n and not dry_run:
             node.replace_with(redacted)
 
-    # Also scrub mailto: href attributes (emails in links)
-    for tag in soup.find_all("a", href=re.compile(r"^mailto:", re.I)):
+    # <a> hrefs: a link's URL/email is often ONLY in the href, never the visible text,
+    # so redact every href — but to a PLAIN [URL] (label_urls=False); the visible text
+    # carries the service label. For a descriptive link (text wasn't itself the URL),
+    # APPEND the `[<Label> URL]` so the reader keeps the which-service context.
+    label_fn = _make_url_label_fn(cfg)
+    for tag in soup.find_all("a", href=True):
         href = tag.get("href", "")
-        redacted, n = _redact_text(href, analyzer, cfg, kw_replacements, kr, collector)
+        redacted, n = _redact_text(href, analyzer, cfg, kw_replacements, kr, collector,
+                                   label_urls=False)
         total += n
         if n and not dry_run:
             tag["href"] = redacted
+        if (label_fn and not dry_run and re.match(r"(?i)https?://", href.strip())
+                and not re.search(URL_REGEX, orig_link_text.get(id(tag), ""))):
+            tag.append(" " + label_fn(href))
 
     if not dry_run:
         dst.parent.mkdir(parents=True, exist_ok=True)

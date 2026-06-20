@@ -14,7 +14,8 @@ Three find modes (set via `entities` + `regex_only` in config):
   (PERSON, ORGANIZATION, …) are silently skipped → MODEL ENTITIES shows N/A. Fast,
   deterministic — cuts large-JSON runs from minutes to seconds.
 - **NER** (`entities` non-empty, `regex_only: false`) — spaCy/Presidio detects
-  names/orgs/etc. Add `URL` to `entities` to redact http(s) URLs to `[URL]` (a
+  names/orgs/etc. Add `URL` to `entities` to redact http(s) URLs to a domain-aware
+  `[<domain> URL]` token (e.g. `[notion URL]`; a keyword domain uses its alias) — a
   blanket `(?i)https?://\S+` recognizer; opt-in, off unless `URL` is listed).
 
 Plus a discovery mode: **`--scan`** lists candidate identities (NER) by entity
@@ -81,7 +82,7 @@ scan/leak-guard logic) also run under system `python3`.
 - Apple Vision OCR (macOS) >> Tesseract; check setup output for which is active
 - `include_extensions` is an enforced allowlist (only listed + handled types are processed); `--include .md,.txt` overrides it per run; `skip_extensions` is checked first
 - Re-runs never re-redact own output: a scan skips any nested dir named `redacted`/`redacted-*` (and `redaction-report*.md`), so re-running a folder after adding keywords is safe and won't nest prior output. Exception: pointing the tool *directly at* a `redacted-*` dir (as the input) processes it. Originals are read-only — never renamed/modified (`_is_own_output_dir`, redact.py)
-- `URL` entity (add to `entities`) → http(s) URLs redacted to `[URL]`
+- `URL` entity (add to `entities`) → http(s) URLs redacted to a **domain-aware** `[<domain> URL]` (verbatim-lowercase registrable domain; a keyword domain → its alias; unknown/unparseable → plain `[URL]`). In **HTML**: every `<a href>` is scrubbed (not just `mailto:`) to a plain `[URL]`, and the `[<domain> URL]` label is **appended** to descriptive link text (visible text kept for context); a link whose text IS the URL becomes the label. Registrable-domain is a heuristic (multi-part TLDs like `.co.uk` not special-cased). Helpers: `url_token` / `_registrable_label` in `redact.py`
 - `redact_filenames: true` (opt-in, default off) → renames **aliased** `custom_keywords` (those with a `replace:` pseudonym) in output file + dir NAMES → the sanitized pseudonym (originals untouched). SUBSTRING match (not the content path's word-boundary), gated by `filename_min_match_len` (default 4). PLAIN (no-alias) keywords are NOT renamed (a █████ token is useless in a name) — any surviving in an output name are FLAGGED. The FILENAME REDACTIONS report section ITEMIZES old→new renames + leaks (the report already lists matched PII + is marked keep-local). A real run also writes machine-readable companions `redacted/_filename-renames.txt` + `_filename-flags.txt` (hold real names — local only). NER never touches names. Engine: `filename_redactor.py` (stdlib)
 - Every run (dry-run AND real) prints the SAME unified report — PATTERN MATCHES (regex) / MODEL ENTITIES (NER) / CUSTOM KEYWORDS (blacked out vs replaced), per-group subtotals + grand total; the real run adds an `Output at:` line. Itemizes text and image/PDF matches alike
 
