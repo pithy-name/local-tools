@@ -53,6 +53,7 @@ If anything in the runbook conflicts with your default behavior, the runbook win
 - **`.env` exists** in `<TOOL_DIR>` with `COWORK_WORKSPACE` set (see Setup).
 - **Pass the SAME `--target` to BOTH `--baseline` and `--verify`** (or set `COWORK_TARGET` in `.env` so both inherit it). Different targets → the delta is computed against the wrong dir and I2 FAILs spuriously.
 - **Do not open or relaunch any other Claude Code session in `<CLAUDE_PROJECT_DIR>` between step 3 (`--baseline`) and step 5 (`--verify`)** — including closing/reopening VS Code or the Claude Code window. A relaunch appends a new `<uuid>.jsonl` to the target root, inflating the measured delta → **I2** reports `added > copied` (flagged as likely external churn). The single session running this runbook is fine.
+- **Target must be on a LOCAL, non-synced filesystem.** `~/.claude/projects/` normally is. If your target lives under iCloud Drive (`~/Library/Mobile Documents/…`), Dropbox, or another sync provider, the verifier can read a **stale directory view** (sync lag between `shutil.copy2` finishing and the file appearing in a later `os.scandir`), producing a spurious I1/I2/I3 PASS *or* FAIL. If you must migrate into a synced dir, pause syncing (or wait for it to settle) before running `--verify`.
 
 ## Order of operations
 
@@ -138,15 +139,15 @@ After USER runs `--verify`, USER asks Claude to assess. Claude:
 3. If FAIL: reads BOTH `critical_failures` AND `critical_skipped` from `summary.json`, lists each failing/skipped invariant ID, and `cat`s its raw `I#.txt`.
 4. Recommends the next step per the table below.
 
-`summary.json` keys: `verdict`, `verdict_note`, `timestamp`, `tests[]` (`{id, criticality, status, raw_output_path}`), `critical_failures`, `critical_skipped`. All 6 invariants are CRITICAL; there is no SECONDARY tier.
+`summary.json` keys: `verdict`, `verdict_note`, `timestamp`, `tests[]` (`{id, criticality, status, raw_output_path}`), `critical_failures`, `critical_skipped`, `migration_errors`. All 6 invariants are CRITICAL; there is no SECONDARY tier. `migration_errors` is the count from the migration's `MACHINE_SUMMARY` (copy errors across transcripts + tool-results + memory) — **any value > 0 forces a FAIL verdict even if all six invariants pass**, and is never masked by a dry-run PARTIAL PASS.
 
 ## Verdict-driven recommendations
 
 | Verdict | Meaning | Recommended next step |
 |---------|---------|----------------------|
 | **PASS** | All 6 invariants passed. | Proceed to step 7 (UI spot-check). **Caveat:** PASS confirms the migration is *consistent with its own report and clean* — it does NOT prove the *right* sessions were selected. Step 7 is your selection check; do not skip it before archiving (step 9). |
-| **PARTIAL PASS** | The migration output was a **dry-run** — structural invariants are vacuous (nothing copied). | Not a real verification. Run the real migration (step 4, no `--dry-run`, teed to `migration-output.txt`) and re-verify (step 5). |
-| **FAIL** | A CRITICAL invariant failed, or I2 had no `MACHINE_SUMMARY` oracle. | STOP. Do NOT proceed to step 7 or archive. See "Recovery on FAIL". |
+| **PARTIAL PASS** | The migration output was a **dry-run** — structural invariants are vacuous (nothing copied). **Only** reported when no real failure/error is present; a real CRITICAL failure or `migration_errors > 0` overrides it to FAIL (an accidental dry-run can never hide a real problem). | Not a real verification. Run the real migration (step 4, no `--dry-run`, teed to `migration-output.txt`) and re-verify (step 5). |
+| **FAIL** | A CRITICAL invariant failed, OR `migration_errors > 0` (the migration reported copy errors), OR I2 had no `MACHINE_SUMMARY` oracle. | STOP. Do NOT proceed to step 7 or archive. See "Recovery on FAIL". |
 
 ## Recovery on FAIL
 
@@ -154,7 +155,7 @@ After USER runs `--verify`, USER asks Claude to assess. Claude:
 
 - **I2 FAIL "no MACHINE_SUMMARY found" → re-TEE, don't just re-run.** The oracle is missing because the migration's stdout wasn't captured. Re-running won't help (it's idempotent → skip-existing → `copied=0`). Fix: re-run the migration capturing stdout to `migration-output.txt`, OR point `--migration-output <file>` at wherever the real stdout was saved, then re-verify.
 - **I2 FAIL `added > copied` (external churn).** A concurrent session wrote to the target between baseline and verify. Re-baseline with no other sessions open, then re-migrate/verify.
-- **Re-run migration script.** Idempotent — skip-existing protects already-copied files. Claude must NOT re-run without USER saying "yes, re-run."
+- **Re-run migration script.** Idempotent — skip-existing protects already-copied files. **A 0-byte destination (interrupted prior copy) is NOT skipped — the re-run re-copies it**, so an I3 FAIL on an empty `.jsonl` self-heals on re-run; no manual cleanup needed. (A *partially-written but non-empty* file would still be skipped — if I3 flags a malformed non-empty transcript, delete that file from the target, then re-run.) Claude must NOT re-run without USER saying "yes, re-run."
 - **Selectively delete bad files from target.** Cowork sources are read-only from the script's perspective. Safe to remove from target and re-run.
 - **Full restore from the optional pre-migration backup** (only if you made one in step 2b). `rm -rf <CLAUDE_PROJECT_DIR>/` then `mv ~/.claude/backups/pre-cowork-migration-<SPACE_NAME>-<ts>/<CLAUDE_PROJECT_DIRNAME>/ ~/.claude/projects/`. **Destructive — USER confirms first.**
 - **Restore MEMORY.md only** (if I5 FAILs and you made a backup): `cp ~/.claude/backups/pre-cowork-migration-<SPACE_NAME>-<ts>/<CLAUDE_PROJECT_DIRNAME>/memory/MEMORY.md <CLAUDE_PROJECT_DIR>/memory/MEMORY.md`. **Destructive — USER confirms first.**

@@ -56,12 +56,26 @@ Neither I2 nor any invariant here certifies that discovery selected the **right*
 
 ## Dry-run handling
 
-If `migration-output.txt` reports `dry_run: true`, the verifier prints a WARNING, marks **I2 SKIPPED**, and returns **PARTIAL PASS** (exit 1) — a dry-run copies nothing, so the structural invariants are vacuous. Verify a real migration.
+If `migration-output.txt` reports `dry_run: true`, the verifier prints a WARNING, marks **I2 SKIPPED**, and returns **PARTIAL PASS** (exit 1) — a dry-run copies nothing, so the structural invariants are vacuous. Verify a real migration. **A dry-run never masks a real problem:** if any CRITICAL invariant FAILs or `migration_errors > 0`, the verdict is FAIL regardless of the dry-run flag (real failures take precedence over PARTIAL PASS).
 
 ## Verdict & exit codes
 
-- **PASS** (exit 0): all 6 invariants pass.
-- **PARTIAL PASS** (exit 1): the migration output was a dry-run (see above).
-- **FAIL** (exit 2): any CRITICAL invariant FAILed, or I2 had no oracle (missing `MACHINE_SUMMARY`).
+Verdict precedence (computed by `compute_verdict`, highest first):
 
-`summary.json` records the verdict, a `verdict_note`, and per-invariant status + raw-output paths.
+1. **FAIL** (exit 2): any CRITICAL invariant FAILed, OR `migration_errors > 0` (the migration's `MACHINE_SUMMARY` reported copy errors), OR I2 had no oracle (missing `MACHINE_SUMMARY`). Real failures and copy-errors are checked **before** the dry-run downgrade, so they are never hidden.
+2. **PARTIAL PASS** (exit 1): the migration output was a dry-run AND nothing above failed (see *Dry-run handling*).
+3. **PASS** (exit 0): all 6 invariants pass, no copy errors.
+
+`summary.json` records `verdict`, `verdict_note`, per-invariant status + raw-output paths, `critical_failures`, `critical_skipped`, and `migration_errors`.
+
+## Unit + integration tests (the tool's own test suite)
+
+Separate from the per-run invariant checks above, the tool ships a stdlib `unittest` suite — run it after any code change:
+
+```bash
+python3 -m unittest test_cowork_config test_verify_migration test_migrate_cowork_sessions
+```
+
+- `test_cowork_config.py` — `.env` loading + precedence resolution.
+- `test_verify_migration.py` — verifier predicates (`parse_machine_summary`, `is_wellformed_jsonl`, `is_forbidden_added_path`), the invariant functions (I1/I3/I4/I5), and `compute_verdict` precedence.
+- `test_migrate_cowork_sessions.py` — discovery/classification, copy bookkeeping (incl. 0-byte re-copy), snapshots, the `MACHINE_SUMMARY` line, and one end-to-end integration test that builds a synthetic Cowork workspace and subprocess-runs the migration (exclusions, idempotency, 0-byte heal). All fixtures are synthetic placeholders — no real data.

@@ -66,6 +66,11 @@ def load_spaces(spaces_file: Path) -> dict:
         if "spaces" in data and isinstance(data["spaces"], list):
             return {s.get("id", s.get("spaceId", f"_idx{i}")): s
                     for i, s in enumerate(data["spaces"])}
+        if data and not all(isinstance(v, dict) for v in data.values()):
+            print(f"WARNING: {spaces_file} has an unexpected shape (not a list, not "
+                  "a {'spaces':[...]} wrapper, and not an id->record map). Space-name "
+                  "resolution may fail; pass --space <uuid> to match sidecars directly.",
+                  file=sys.stderr)
         return data
     return {}
 
@@ -99,23 +104,48 @@ def candidate_title(session_meta: dict) -> str:
     return ""
 
 
-def find_transcripts_for_session(workspace: Path, session_id: str) -> list[Path]:
-    """Return main transcript paths for a given local_<uuid> session dir.
-    Skips subagent transcripts and audit.jsonl."""
-    session_dir = workspace / session_id
+def _classify_session_jsonls(session_dir: Path) -> dict:
+    """Classify every *.jsonl under a session dir (filesystem read only).
+    Returns counts/lists:
+      - transcripts:  list[Path] kept (under /.claude/projects/, not subagent/audit/agent-*)
+      - subagents:    count excluded as subagent transcripts (incl. agent-*.jsonl anywhere)
+      - audit:        count excluded as audit.jsonl
+      - non_project:  count of would-be transcripts excluded ONLY by the
+                      /.claude/projects/ path filter (signals silent exclusion)
+    A file is kept iff: '/.claude/projects/' in path AND not a subagent AND not audit.
+    agent-*.jsonl under /.claude/projects/ but NOT under /subagents/ is silently
+    excluded (I4 forbids them) without incrementing any diagnostic counter.
+    agent-*.jsonl under /subagents/ is counted in subagents."""
+    result: dict = {"transcripts": [], "subagents": 0, "audit": 0, "non_project": 0}
     if not session_dir.is_dir():
-        return []
-    out = []
+        return result
     for p in session_dir.rglob("*.jsonl"):
         sp = str(p)
-        if "/.claude/projects/" not in sp:
-            continue
-        if "/subagents/" in sp:
-            continue
-        if sp.endswith("/audit.jsonl"):
-            continue
-        out.append(p)
-    return out
+        base = p.name
+        is_subagent_path = "/subagents/" in sp
+        is_agent_star = base.startswith("agent-")
+        is_audit = sp.endswith("/audit.jsonl")
+        in_projects = "/.claude/projects/" in sp
+        if is_subagent_path:
+            result["subagents"] += 1
+        elif is_audit:
+            result["audit"] += 1
+        elif not in_projects:
+            result["non_project"] += 1
+        elif is_agent_star:
+            # agent-*.jsonl inside /.claude/projects/ but NOT under /subagents/:
+            # excluded (I4 forbids them) but not counted in any diagnostic bucket.
+            pass
+        else:
+            result["transcripts"].append(p)
+    return result
+
+
+def find_transcripts_for_session(workspace: Path, session_id: str) -> list[Path]:
+    """Return main transcript paths for a given local_<uuid> session dir.
+    Skips subagent transcripts, audit.jsonl, and agent-*.jsonl (see
+    _classify_session_jsonls)."""
+    return _classify_session_jsonls(workspace / session_id)["transcripts"]
 
 
 def _space_display_name(space_record: dict) -> str:
@@ -195,6 +225,16 @@ def _print_space_table(workspace: Path, spaces: dict) -> None:
 
 # ── Migration ──────────────────────────────────────────────────────────────────
 
+def _dest_is_complete(dest: Path) -> bool:
+    """True if dest exists and is non-empty (safe to skip on a re-run). A 0-byte
+    dest is treated as an interrupted prior copy → re-copy it so an idempotent
+    re-run heals it (verifier I3 would otherwise FAIL on the empty file)."""
+    try:
+        return dest.exists() and dest.stat().st_size > 0
+    except OSError:
+        return False
+
+
 def migrate_transcripts(
     transcripts: list[Path], target_dir: Path, dry_run: bool
 ) -> tuple[list[str], list[str], list[str]]:
@@ -204,7 +244,7 @@ def migrate_transcripts(
     errors: list[str] = []
     for src in transcripts:
         dest = target_dir / src.name
-        if dest.exists():
+        if _dest_is_complete(dest):
             print(f"  skip   {src.name}")
             skipped.append(src.stem)
         else:
@@ -240,7 +280,7 @@ def migrate_tool_results(
             rel = src_file.relative_to(tool_results_src)
             dest_file = tool_results_dest / rel
             label = f"{src_transcript.stem}/tool-results/{rel}"
-            if dest_file.exists():
+            if _dest_is_complete(dest_file):
                 print(f"  skip   {label}")
                 skipped.append(label)
             else:
@@ -285,7 +325,7 @@ def migrate_memory(
             skipped.append(src.name)
             continue
         dest = memory_target / src.name
-        if dest.exists():
+        if _dest_is_complete(dest):
             print(f"  skip   {src.name}  (already exists)")
             skipped.append(src.name)
         else:
@@ -678,6 +718,22 @@ def print_diff(
     print(bar)
 
 
+def build_machine_summary_line(*, transcripts_copied: int, transcripts_skipped: int,
+                               tool_results_copied: int, memory_copied: int,
+                               errors: int, dry_run: bool) -> str:
+    """Build the greppable MACHINE_SUMMARY line (verify_migration.py's I2 oracle).
+    Pure: returned as a string so main() can emit it even if the post-copy
+    display crashes (BLOCKER 3)."""
+    return "MACHINE_SUMMARY " + json.dumps({
+        "transcripts_copied": transcripts_copied,
+        "transcripts_skipped": transcripts_skipped,
+        "tool_results_copied": tool_results_copied,
+        "memory_copied": memory_copied,
+        "errors": errors,
+        "dry_run": dry_run,
+    })
+
+
 # ── Main ───────────────────────────────────────────────────────────────────────
 
 def main():
@@ -794,8 +850,11 @@ def main():
     # ── Target validation ──────────────────────────────────────────────────────
     if not args.target.exists():
         if args.create_target:
-            print(f"NOTE: --target does not exist; will create: {args.target}")
-            if not args.dry_run:
+            if args.dry_run:
+                print(f"NOTE: --target does not exist. A real run would create it: {args.target}")
+                print("      (dry-run changes nothing — keep --create-target on the real run.)")
+            else:
+                print(f"NOTE: --target does not exist; creating: {args.target}")
                 args.target.mkdir(parents=True, exist_ok=True)
         else:
             print(f"ERROR: --target does not exist: {args.target}", file=sys.stderr)
@@ -893,6 +952,21 @@ def main():
 
     memory_source = workspace / "spaces" / matched_space_id / "memory"
 
+    # Surface silent exclusion: session dirs containing *.jsonl that were dropped
+    # ONLY by the /.claude/projects/ path filter (Finding 8). copied=0 alone is
+    # ambiguous; this names the cause.
+    non_project_total = sum(
+        _classify_session_jsonls(workspace / s["session_id"])["non_project"]
+        for s in target_sessions
+    )
+    if non_project_total:
+        print(
+            f"WARNING: {non_project_total} *.jsonl file(s) in matched session dirs were "
+            "excluded because they are not under a /.claude/projects/ path. If you expected "
+            "transcripts here, the Cowork layout may differ from this tool's assumption.",
+            file=sys.stderr,
+        )
+
     # ── Pre-flight summary ─────────────────────────────────────────────────────
     if args.dry_run:
         print("=== DRY RUN — no files will be copied ===\n")
@@ -976,28 +1050,29 @@ def main():
     )
 
     # ── AFTER snapshot + diff ──────────────────────────────────────────────────
-    # On --dry-run, after == before (no copies happened) so print_diff renders
-    # "no changes." The would-copy preview is the ASCII summary above.
-    # On a real run, after reflects the post-copy state and print_diff renders
-    # actual added/removed jsonls, subdirs, memory files, and MEMORY.md status.
-    after = snapshot_target_dir(args.target)
-    mem_md_after = snapshot_memory_md(args.target)
-    _print_snapshot_block("[AFTER TARGET STATE]", after, mem_md_after)
-    print_diff(before, after, mem_md_before, mem_md_after)
+    # Build the MACHINE_SUMMARY line FIRST (all counts are already known), then
+    # render the display inside a guard so a crash in snapshot/diff (BLOCKER 3)
+    # can never strip the I2 oracle from the teed output.
+    summary_line = build_machine_summary_line(
+        transcripts_copied=len(copied),
+        transcripts_skipped=len(skipped),
+        tool_results_copied=len(tr_copied),
+        memory_copied=len(mem_copied),
+        errors=len(errors) + len(tr_errors) + len(mem_errors),
+        dry_run=bool(args.dry_run),
+    )
+    try:
+        after = snapshot_target_dir(args.target)
+        mem_md_after = snapshot_memory_md(args.target)
+        _print_snapshot_block("[AFTER TARGET STATE]", after, mem_md_after)
+        print_diff(before, after, mem_md_before, mem_md_after)
+    except Exception as e:  # noqa: BLE001 — display is best-effort; summary must survive
+        print(f"WARNING: post-copy display failed ({e}); the MACHINE_SUMMARY below is still authoritative.",
+              file=sys.stderr)
 
     # ── Machine-readable summary (consumed by verify_migration.py's count cross-check) ──
-    # Stable, greppable, emitted on success AND error. json is already imported above.
-    # NOTE: `copied`/`tr_copied`/`mem_copied` are populated even on --dry-run (the copy
-    # itself is guarded, not the bookkeeping), so the verifier MUST skip the count check
-    # when dry_run is true — that's why dry_run is reported here.
-    print("MACHINE_SUMMARY " + json.dumps({
-        "transcripts_copied": len(copied),
-        "transcripts_skipped": len(skipped),
-        "tool_results_copied": len(tr_copied),
-        "memory_copied": len(mem_copied),
-        "errors": len(errors) + len(tr_errors) + len(mem_errors),
-        "dry_run": bool(args.dry_run),
-    }))
+    # Stable, greppable, emitted on success AND error (and even if the display above crashed).
+    print(summary_line)
 
     if errors or tr_errors or mem_errors:
         sys.exit(1)

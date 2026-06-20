@@ -412,13 +412,48 @@ def inv_i6(cfg: dict, baseline_dir: Path) -> dict:
     )
 
 
+def _baseline_dir_hint(reports_dir: Path) -> str:
+    """A hint appended to the 'baseline/ not found' error when the operator likely
+    passed the baseline/ dir itself instead of its parent reports dir (Finding 6)."""
+    if reports_dir.name == "baseline":
+        return " (did you pass the baseline/ dir itself? pass its PARENT — the reports dir)"
+    return ""
+
+
+def compute_verdict(critical_failures: list, critical_skipped: list,
+                    dry_run_mode: bool, migration_errors: int = 0):
+    """Return (verdict, exit_code, verdict_note).
+
+    Precedence (BLOCKER 4 + Finding 1): real CRITICAL failures and migration
+    copy-errors FAIL FIRST and are never masked by a dry-run PARTIAL PASS; only
+    then does a dry-run downgrade to PARTIAL PASS; a non-dry-run CRITICAL skip is
+    a FAIL (missing oracle)."""
+    if critical_failures or migration_errors:
+        parts = []
+        if critical_failures:
+            parts.append(f"CRITICAL failures: {critical_failures}")
+        if migration_errors:
+            parts.append(f"migration reported {migration_errors} copy error(s)")
+        note = "; ".join(parts)
+        if dry_run_mode:
+            note += " (dry-run output present, but real failures take precedence)"
+        return "FAIL", 2, note
+    if dry_run_mode:
+        return ("PARTIAL PASS", 1,
+                "migration output was a DRY RUN — structural invariants are vacuous "
+                "(nothing copied). Run a REAL migration to verify.")
+    if critical_skipped:
+        return "FAIL", 2, f"CRITICAL tests skipped (missing input): {critical_skipped}"
+    return "PASS", 0, "all invariants passed"
+
+
 # ── Verify mode ───────────────────────────────────────────────────────────────
 
 def run_verify(cfg: dict, reports_dir: Path, migration_output_arg: Optional[Path]) -> int:
     info("Mode: --verify")
     baseline_dir = reports_dir / "baseline"
     if not baseline_dir.is_dir():
-        fail_precondition(f"baseline/ subdir not found under --baseline-dir: {baseline_dir}")
+        fail_precondition(f"baseline/ subdir not found under --baseline-dir: {baseline_dir}{_baseline_dir_hint(reports_dir)}")
     missing = [fn for fn in BASELINE_FILES if not (baseline_dir / fn).is_file()]
     if missing:
         fail_precondition(f"baseline/ is missing expected files: {missing}")
@@ -463,19 +498,9 @@ def run_verify(cfg: dict, reports_dir: Path, migration_output_arg: Optional[Path
     critical_skipped = [r["id"] for r in results
                         if r["criticality"] == "CRITICAL" and r["status"] == "SKIPPED"]
 
-    if dry_run_mode:
-        verdict, exit_code = "PARTIAL PASS", 1
-        verdict_note = ("migration output was a DRY RUN — structural invariants are vacuous "
-                        "(nothing copied). Run a REAL migration to verify.")
-    elif critical_failures:
-        verdict, exit_code = "FAIL", 2
-        verdict_note = f"CRITICAL failures: {critical_failures}"
-    elif critical_skipped:
-        verdict, exit_code = "FAIL", 2
-        verdict_note = f"CRITICAL tests skipped (missing input): {critical_skipped}"
-    else:
-        verdict, exit_code = "PASS", 0
-        verdict_note = "all invariants passed"
+    migration_errors = int(summary.get("errors", 0)) if summary else 0
+    verdict, exit_code, verdict_note = compute_verdict(
+        critical_failures, critical_skipped, dry_run_mode, migration_errors)
 
     summary_out = {
         "verdict": verdict,
@@ -485,6 +510,7 @@ def run_verify(cfg: dict, reports_dir: Path, migration_output_arg: Optional[Path
                    "status": r["status"], "raw_output_path": f"{r['id']}.txt"} for r in results],
         "critical_failures": critical_failures,
         "critical_skipped": critical_skipped,
+        "migration_errors": migration_errors,
     }
     (reports_dir / "summary.json").write_text(json.dumps(summary_out, indent=2) + "\n", encoding="utf-8")
     info(f"Wrote {reports_dir / 'summary.json'}")
