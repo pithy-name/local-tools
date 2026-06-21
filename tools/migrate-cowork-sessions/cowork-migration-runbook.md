@@ -1,6 +1,8 @@
 # Cowork Migration Verification — Runbook
 
-Operator runbook for migrating one Cowork space into a Claude Code project dir and verifying the result. Audience: the human operating the migration + the Claude assisting with assessment. Stand-alone — no prior setup is assumed beyond having the tool and Cowork installed.
+Operator runbook for migrating one Cowork space into a Claude Code project dir and verifying the result. Stand-alone — no prior setup is assumed beyond having the tool and Cowork installed.
+
+**Three ways to run it:** **solo** (you, no AI — see *Run it solo*), **delegated** (Claude drives, you gate the irreversible steps — see *Delegate to Claude*), or **paired** (the step-by-step *Order of operations*, narrated for a human + Claude working together). The mechanical steps are identical across all three.
 
 For the verification methodology (what each invariant checks + its limits), see `VERIFICATION.md`. For script usage, see `README.md`.
 
@@ -23,6 +25,57 @@ cd <TOOL_DIR> && cp demo.env .env
 ```
 
 If you ever move the tool, `.env` must move with the scripts or config resolution fails.
+
+## Run it solo (no Claude)
+
+You do **not** need Claude to run this — the mechanical steps are plain shell + two manual checks. Run all of these in **one terminal session** from `<TOOL_DIR>` (a single shell, so a `TS` variable persists — that's why this path skips the `/tmp/cowork-ts.txt` file the Claude path uses for its separate `!` subshells). Fill in `<SPACE_NAME>` and `<CLAUDE_PROJECT_DIR>` (see *Placeholders*).
+
+```bash
+cd <TOOL_DIR>
+# one-time: cp demo.env .env  and set COWORK_WORKSPACE (see Setup)
+# then QUIT Cowork entirely (the whole app)
+
+TS=$(date +%Y%m%d-%H%M%S)          # one timestamp for this run (persists in THIS shell)
+
+# 1. baseline (target need not exist yet)
+python3 verify_migration.py --baseline --space "<SPACE_NAME>" --target <CLAUDE_PROJECT_DIR> --output-dir verification-reports/$TS/
+
+# 2. (optional) preview — nothing is written
+python3 migrate_cowork_sessions.py --space "<SPACE_NAME>" --target <CLAUDE_PROJECT_DIR> --create-target --dry-run
+
+# 3. migrate — the `tee` is REQUIRED (captures the MACHINE_SUMMARY oracle for step 4)
+python3 migrate_cowork_sessions.py --space "<SPACE_NAME>" --target <CLAUDE_PROJECT_DIR> --create-target 2>&1 | tee verification-reports/$TS/migration-output.txt
+
+# 4. verify — exit code 0 = PASS, 1 = PARTIAL (you ran a dry-run), 2 = FAIL
+python3 verify_migration.py --verify --space "<SPACE_NAME>" --target <CLAUDE_PROJECT_DIR> --baseline-dir verification-reports/$TS/
+echo "exit: $?"
+
+# 5. read the verdict yourself (no AI needed)
+cat verification-reports/$TS/summary.json    # look at "verdict"; on FAIL, cat the I#.txt named in "critical_failures"
+```
+
+Then the two **manual** checks the scripts can't do for you:
+- **UI spot-check** — open one migrated session in Claude Code's history panel and confirm it loads (this is the *selection* check — a PASS proves the copy was clean, not that the *right* sessions were chosen).
+- **Archive** the Cowork project (UI), and *(optional)* hand-add index lines to `<CLAUDE_PROJECT_DIR>/memory/MEMORY.md` for the copied memory files.
+
+On a **FAIL**, see *Recovery on FAIL* below — do the destructive steps yourself, deliberately. The rest of this doc is the same flow narrated for a human+Claude pair; skip it if you're going solo.
+
+## Delegate to Claude
+
+Want Claude to do the work? Hand it this runbook plus the space/target — it runs the mechanical core but must **stop at the human gates** below. Paste something like:
+
+> Migrate Cowork space "<SPACE_NAME>" into `<CLAUDE_PROJECT_DIR>`, following `cowork-migration-runbook.md`. Confirm the target path with me first. Then run baseline → dry-run → migrate (teed) → verify, printing raw command output before any interpretation. Report the verdict and the list of migrated session UUIDs, then STOP — do not archive anything in Cowork, and do not run any destructive recovery without my explicit "yes."
+
+**Claude does:** confirm the target → baseline → dry-run → migrate (`tee`) → verify → assess `summary.json` → *(on request)* update `MEMORY.md`. One agent runs every command, so it can use a single report dir — the `/tmp` timestamp dance is unnecessary.
+
+**Claude STOPS and hands back at these gates** (it cannot, or must not, do them):
+- **Quit Cowork** (step 1) — you quit the app; Claude can't do it safely.
+- **Confirm `<CLAUDE_PROJECT_DIR>`** — you verify the encoded path before it writes anywhere (a typo silently migrates to the wrong place).
+- **UI spot-check** (step 7) — only you can confirm the *right* sessions migrated; a PASS proves "clean + consistent," not selection. Claude reports the migrated UUIDs; you open one and check.
+- **Archive in Cowork** (step 9) — UI action, hard to undo; you do it after the spot-check.
+- **Destructive recovery on FAIL** — Claude proposes from the failing `I#.txt`; you approve before any `rm`/restore.
+
+In short: **Claude executes, you decide.** Delegation removes the typing, not the judgment.
 
 ## Transparency rule (BLOCKING for Claude)
 
