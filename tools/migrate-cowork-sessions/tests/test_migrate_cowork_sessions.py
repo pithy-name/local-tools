@@ -87,6 +87,10 @@ class CandidateSpaceId(unittest.TestCase):
     def test_absent(self):
         self.assertEqual(m.candidate_space_id({"unrelated": 1}), "")
 
+    def test_nested_non_str_ignored(self):
+        # a nested spaceId whose inner value isn't a str must NOT be returned as a dict
+        self.assertEqual(m.candidate_space_id({"space": {"id": {"weird": 1}}}), "")
+
 
 class CandidateTitle(unittest.TestCase):
     def test_first_match_wins(self):
@@ -178,6 +182,18 @@ class ClassifySessionJsonls(unittest.TestCase):
         c = m._classify_session_jsonls(_tmp() / "nope")
         self.assertEqual(c["transcripts"], [])
         self.assertEqual(c["non_project"], 0)
+
+    def test_credentials_in_projects_excluded_and_counted(self):
+        # A *credentials* file under /.claude/projects/ must be excluded AND counted
+        # (the migrate side must not copy what verifier I4 forbids).
+        ws = _tmp()
+        sess = ws / f"local_{SESS_UUID}"
+        proj = sess / ".claude" / "projects" / "proj"
+        proj.mkdir(parents=True)
+        (proj / "x.credentials.jsonl").write_text('{"token":"x"}\n')
+        c = m._classify_session_jsonls(sess)
+        self.assertEqual(c["credentials_excluded"], 1)
+        self.assertEqual(c["transcripts"], [])
 
 
 class FindTranscripts(unittest.TestCase):
@@ -474,6 +490,28 @@ class Integration(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertFalse(target.exists())            # dry-run must not create it
         self.assertIn("would create", r.stdout.lower())
+
+    def test_memory_target_flag(self):
+        ws = self._build_workspace()
+        target = _tmp() / "proj-target"
+        mem_dest = _tmp() / "custom-memory"
+        r = subprocess.run(
+            [sys.executable, str(TOOL), "--space", SPACE_UUID, "--workspace", str(ws),
+             "--target", str(target), "--create-target", "--memory-target", str(mem_dest)],
+            capture_output=True, text=True,
+        )
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertTrue((mem_dest / "note.md").is_file())
+        self.assertFalse((target / "memory" / "note.md").exists())  # went to the custom dir
+
+    def test_credentials_artifact_not_copied(self):
+        ws = self._build_workspace()
+        proj = ws / f"local_{SESS_UUID}" / ".claude" / "projects" / "proj"
+        (proj / ".credentials.jsonl").write_text('{"token":"x"}\n')
+        target = _tmp() / "proj-target"
+        r = self._run(ws, target)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertFalse(any(target.rglob("*credentials*")))  # never copied out
 
     def test_only_matched_space_migrates(self):
         from fixtures import TX2_UUID

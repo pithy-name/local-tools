@@ -137,13 +137,17 @@ def parse_machine_summary(migration_output: str) -> Optional[dict]:
 
 
 def is_wellformed_jsonl(path: Path) -> bool:
-    """size > 0 and first line parses as JSON."""
+    """size > 0 and the first non-blank line parses as JSON. Reads utf-8-sig so a
+    BOM doesn't cause a false FAIL (matches the migrate script's tolerant readers)."""
     try:
         if path.stat().st_size == 0:
             return False
-        with path.open(encoding="utf-8") as f:
-            json.loads(f.readline())
-        return True
+        with path.open(encoding="utf-8-sig") as f:
+            for line in f:
+                if line.strip():
+                    json.loads(line)
+                    return True
+        return False  # only blank lines
     except (OSError, json.JSONDecodeError):
         return False
 

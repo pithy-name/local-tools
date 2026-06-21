@@ -92,7 +92,7 @@ def candidate_space_id(session_meta: dict) -> str:
                 return v
             if isinstance(v, dict):
                 for kk in ("id", "spaceId", "uuid"):
-                    if kk in v:
+                    if kk in v and isinstance(v[kk], str):
                         return v[kk]
     return ""
 
@@ -107,17 +107,20 @@ def candidate_title(session_meta: dict) -> str:
 def _classify_session_jsonls(session_dir: Path) -> dict:
     """Classify every *.jsonl under a session dir (filesystem read only).
     Returns counts/lists:
-      - transcripts:    list[Path] kept (under /.claude/projects/, not subagent/audit/agent-*)
-      - subagents:      count excluded as subagent transcripts (files under a /subagents/ path)
-      - audit:          count excluded as audit.jsonl
-      - non_project:    count of would-be transcripts excluded ONLY by the
-                        /.claude/projects/ path filter (signals silent exclusion)
-      - agent_excluded: count of agent-*.jsonl under /.claude/projects/ but NOT under
-                        /subagents/ (excluded because I4 forbids them; counted for diagnostics)
-    A file is kept iff: '/.claude/projects/' in path AND not a subagent AND not audit.
+      - transcripts:           list[Path] kept (under /.claude/projects/, not subagent/audit/agent-*/credentials)
+      - subagents:             count excluded as subagent transcripts (files under a /subagents/ path)
+      - audit:                 count excluded as audit.jsonl
+      - non_project:           count of would-be transcripts excluded ONLY by the
+                               /.claude/projects/ path filter (signals silent exclusion)
+      - agent_excluded:        count of agent-*.jsonl under /.claude/projects/ but NOT under
+                               /subagents/ (excluded because I4 forbids them; counted for diagnostics)
+      - credentials_excluded:  count of *credentials* files under /.claude/projects/,
+                               excluded as a privacy backstop (I4 forbids them)
+    A file is kept iff: '/.claude/projects/' in path AND not a subagent AND not audit
+    AND not agent-* AND not *credentials*.
     agent-*.jsonl under /subagents/ is counted in subagents."""
     result: dict = {"transcripts": [], "subagents": 0, "audit": 0, "non_project": 0,
-                    "agent_excluded": 0}
+                    "agent_excluded": 0, "credentials_excluded": 0}
     if not session_dir.is_dir():
         return result
     for p in session_dir.rglob("*.jsonl"):
@@ -126,6 +129,7 @@ def _classify_session_jsonls(session_dir: Path) -> dict:
         is_subagent_path = "/subagents/" in sp
         is_agent_star = base.startswith("agent-")
         is_audit = sp.endswith("/audit.jsonl")
+        is_credentials = "credentials" in base.lower()
         in_projects = "/.claude/projects/" in sp
         if is_subagent_path:
             result["subagents"] += 1
@@ -133,6 +137,8 @@ def _classify_session_jsonls(session_dir: Path) -> dict:
             result["audit"] += 1
         elif not in_projects:
             result["non_project"] += 1
+        elif is_credentials:
+            result["credentials_excluded"] += 1
         elif is_agent_star:
             # agent-*.jsonl inside /.claude/projects/ but NOT under /subagents/:
             # excluded (I4 forbids them) and counted for operator diagnostics.
@@ -864,7 +870,8 @@ def main():
             print("  Use --create-target to allow the script to create it.", file=sys.stderr)
             sys.exit(1)
 
-    memory_target = args.memory_target or (args.target / "memory")
+    memory_target = (args.memory_target.expanduser() if args.memory_target
+                     else args.target / "memory")
 
     # ── Sidecar scan ───────────────────────────────────────────────────────────
     sessions, parse_errors, empty_space_id_count, sidecar_stems = _scan_sidecars(workspace)
@@ -976,6 +983,17 @@ def main():
         print(
             f"WARNING: {agent_excluded_total} agent-*.jsonl file(s) under /.claude/projects/ "
             "were excluded as subagent transcripts (consistent with verifier invariant I4).",
+            file=sys.stderr,
+        )
+
+    credentials_excluded_total = sum(
+        _classify_session_jsonls(workspace / s["session_id"])["credentials_excluded"]
+        for s in target_sessions
+    )
+    if credentials_excluded_total:
+        print(
+            f"WARNING: {credentials_excluded_total} *credentials* file(s) under /.claude/projects/ "
+            "were excluded (never copied) as a privacy safeguard.",
             file=sys.stderr,
         )
 

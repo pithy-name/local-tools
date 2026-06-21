@@ -58,6 +58,15 @@ class Predicates(unittest.TestCase):
         self.assertFalse(vm.is_wellformed_jsonl(d / "bad.jsonl"))
         self.assertFalse(vm.is_wellformed_jsonl(d / "missing.jsonl"))
 
+    def test_wellformed_jsonl_bom_and_leading_blank(self):
+        d = Path(tempfile.mkdtemp())
+        (d / "bom.jsonl").write_text('﻿{"a":1}\n', encoding="utf-8")
+        (d / "blank_first.jsonl").write_text('\n{"a":1}\n', encoding="utf-8")
+        (d / "all_blank.jsonl").write_text('\n\n', encoding="utf-8")
+        self.assertTrue(vm.is_wellformed_jsonl(d / "bom.jsonl"))
+        self.assertTrue(vm.is_wellformed_jsonl(d / "blank_first.jsonl"))
+        self.assertFalse(vm.is_wellformed_jsonl(d / "all_blank.jsonl"))
+
 
 class ComputeVerdict(unittest.TestCase):
     """FIX: BLOCKER 4 + Finding 1 — verdict precedence.
@@ -256,8 +265,11 @@ class VerifySuiteEndToEnd(unittest.TestCase):
     VERIFY = Path(__file__).resolve().parent.parent / "verify_migration.py"
 
     def _ws_and_target(self):
+        # Multi-project source: the synthetic Cowork workspace holds more than one
+        # space, so the executable verification exercises a realistic "migrate one of
+        # several projects" run.
         ws = Path(tempfile.mkdtemp())
-        build_synthetic_workspace(ws)
+        build_synthetic_workspace(ws, with_second_space=True)
         target = Path(tempfile.mkdtemp()) / "target"
         return ws, target, SPACE_UUID
 
@@ -290,6 +302,22 @@ class VerifySuiteEndToEnd(unittest.TestCase):
         summary = json.loads((reports / "summary.json").read_text())
         self.assertEqual(summary["verdict"], "PASS")
         self.assertEqual(summary["migration_errors"], 0)
+
+    def test_end_to_end_multiproject_isolation(self):
+        # Multi-project source: migrating one space must verify PASS and leave the
+        # OTHER project's transcript out of the target (executable verification of
+        # cross-project isolation).
+        from fixtures import TX_UUID, TX2_UUID
+        ws, target, space = self._ws_and_target()
+        reports = Path(tempfile.mkdtemp()) / "reports"
+        self.assertEqual(self._baseline(ws, target, space, reports).returncode, 0)
+        self.assertEqual(self._migrate(ws, target, space, reports).returncode, 0)
+        v = self._verify(ws, target, space, reports)
+        self.assertEqual(v.returncode, 0, v.stderr + v.stdout)
+        summary = json.loads((reports / "summary.json").read_text())
+        self.assertEqual(summary["verdict"], "PASS")
+        self.assertTrue((target / f"{TX_UUID}.jsonl").is_file())
+        self.assertFalse((target / f"{TX2_UUID}.jsonl").exists())
 
     def test_end_to_end_fail_on_forbidden_artifact(self):
         ws, target, space = self._ws_and_target()
