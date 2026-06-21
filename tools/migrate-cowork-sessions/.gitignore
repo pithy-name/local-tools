@@ -6,3 +6,6 @@ verification-reports/
 
 # Exported session transcripts dropped here by /export — contain real IDs.
 *.txt
+
+# Design-rationale working doc — LOCAL, not shipped (same convention as redaction-tool).
+decisions.md

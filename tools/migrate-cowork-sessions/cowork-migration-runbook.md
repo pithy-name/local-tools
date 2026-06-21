@@ -2,7 +2,7 @@
 
 Operator runbook for migrating one Cowork space into a Claude Code project dir and verifying the result. Audience: the human operating the migration + the Claude assisting with assessment. Stand-alone — no prior setup is assumed beyond having the tool and Cowork installed.
 
-For the test methodology (what each invariant checks + its limits), see `TESTING.md`. For script usage, see `README.md`.
+For the verification methodology (what each invariant checks + its limits), see `VERIFICATION.md`. For script usage, see `README.md`.
 
 ## Placeholders
 
@@ -59,7 +59,7 @@ If anything in the runbook conflicts with your default behavior, the runbook win
 
 Run these in order. Steps marked `(via !)` are shell commands the operator runs from Claude Code's `!` prompt (each `!` is a fresh subshell, which is why the timestamp is read from a file, not an env var). Steps marked OPTIONAL can be skipped.
 
-**0a. Open a fresh Claude Code session in `<TOOL_DIR>`** *(USER)* — one session for the whole runbook.
+**0a. Open a fresh Claude Code session in `<TOOL_DIR>`** *(USER)* — one session for the whole runbook. *(New to Claude Code? It's a CLI: run `claude` from `<TOOL_DIR>` to open a session. Inside it, prefix any shell command with `!` to run it — each `!` is a fresh subshell, which is why the timestamp below is saved to a file rather than an env var.)*
 
 **0b. Paste the kickoff prompt** (above) as the first message *(USER)* — so Claude reads the runbook + the BLOCKING transparency rule before any work.
 
@@ -116,7 +116,7 @@ cd <TOOL_DIR> && python3 verify_migration.py --verify \
 
 **8. Update MEMORY.md** *(CLAUDE, on USER request)* — Claude reads each migrated memory file and appends one-line index entries to `<CLAUDE_PROJECT_DIR>/memory/MEMORY.md`, matching the existing format. **Must run AFTER step 5** (I5 verifies the migration left MEMORY.md unchanged; this is the intentional human-directed edit).
 
-**9. Archive the `<SPACE_NAME>` Cowork project** *(USER)* — **two passes, in order:** (1) archive each **session conversation** individually first, THEN (2) archive the **project** overall. Cowork's project-archive does NOT cascade to its sessions — archiving the project alone leaves orphaned session entries. Only do this after step 7 succeeds (archiving is hard to undo).
+**9. Archive the `<SPACE_NAME>` Cowork project** *(USER)* — **two passes, in order:** (1) archive each **session conversation** individually first, THEN (2) archive the **project** overall. Cowork's project-archive does NOT cascade to its sessions — archiving the project alone leaves orphaned session entries. Only do this after step 7 succeeds (archiving is hard to undo). *(Approximate Cowork UI path: open each conversation → its `⋯` / overflow menu → Archive; then the project list → the project's `⋯` menu → Archive Project. Exact labels may differ by Cowork version.)*
 
 **10. (OPTIONAL) Delete the step-2b backup** *(USER via `!`)* — only if you made one, and only after step 7.
 
@@ -164,10 +164,10 @@ When interpreting verify output (step 6) and deciding recovery, Claude works ONL
 
 ## What an I2 PASS does and does NOT prove
 
-I2 cross-checks the migrate script's *reported* copy count against the *measured* new-`.jsonl` delta — a **consistency** check. It catches count-changing drops/dups, but it CANNOT detect a no-op (nothing copied), a drop masked by skip-existing, or a wrong-but-valid session selection. No invariant here certifies *which* sessions were migrated — the step-7 UI spot-check is that check. See `TESTING.md` for the full limits.
+I2 cross-checks the migrate script's *reported* copy count against the *measured* new-`.jsonl` delta — a **consistency** check. It catches count-changing drops/dups, but it CANNOT detect a no-op (nothing copied), a drop masked by skip-existing, or a wrong-but-valid session selection. No invariant here certifies *which* sessions were migrated — the step-7 UI spot-check is that check. See `VERIFICATION.md` for the full limits.
 
 ## What this runbook does NOT cover
 
-- Per-invariant acceptance criteria + methodology — see `TESTING.md`.
+- Per-invariant acceptance criteria + methodology — see `VERIFICATION.md`.
 - Migration-script flags — see `README.md`.
 - Architecture / design rationale — see `plans/generic-cowork-migration/cowork-migration-project-agnostic-design.md` and `…-verify-suite-design.md`.

@@ -38,7 +38,7 @@ All are **CRITICAL** (verdict is PASS only if all pass). Each writes an `I#.txt`
 | **I1** | **Conservation** — no pre-migration target path was deleted/moved | `baseline/target_listing.txt` | any baseline path is absent post-migration |
 | **I2** | **Count cross-check** *(independent oracle)* — new root `.jsonl` count == migrate's reported `transcripts_copied` | `migration-output.txt` `MACHINE_SUMMARY` + live target | counts differ, or no summary found. SKIPPED on a dry-run. |
 | **I3** | **Well-formed** — every newly-added `.jsonl` is non-empty and parses as JSON | live target delta | any added transcript is empty/corrupt |
-| **I4** | **Clean delta** — no newly-added path is a subagent/`audit.jsonl`/credentials artifact | live target delta | a forbidden file was added (incl. anything under `/subagents/`) |
+| **I4** | **Clean delta** — no newly-added path is a subagent/`audit.jsonl`/credentials artifact | live target delta | a forbidden file was added: anything under `/subagents/`, `audit.jsonl`, any `agent-*.jsonl` (anywhere), or any filename containing `credentials` |
 | **I5** | **MEMORY.md unchanged** — target `memory/MEMORY.md` sha256 == baseline | `baseline/memory_md.sha256` | the migration modified the index (operator updates it separately, *after* verify) |
 | **I6** | **Cowork sources unchanged** — `spaces.json` sha256 + cowork memory listing + session-dir count all == baseline | the three baseline source files | any Cowork source was mutated (copy-only invariant broken) |
 
@@ -70,12 +70,13 @@ Verdict precedence (computed by `compute_verdict`, highest first):
 
 ## Unit + integration tests (the tool's own test suite)
 
-Separate from the per-run invariant checks above, the tool ships a stdlib `unittest` suite — run it after any code change:
+Separate from the per-run invariant checks above, the tool ships a stdlib `unittest` suite under `tests/` — run it from the tool dir after any code change:
 
 ```bash
-python3 -m unittest test_cowork_config test_verify_migration test_migrate_cowork_sessions
+python3 -m unittest discover -s tests
 ```
 
-- `test_cowork_config.py` — `.env` loading + precedence resolution.
-- `test_verify_migration.py` — verifier predicates (`parse_machine_summary`, `is_wellformed_jsonl`, `is_forbidden_added_path`), the invariant functions (I1/I3/I4/I5), and `compute_verdict` precedence.
-- `test_migrate_cowork_sessions.py` — discovery/classification, copy bookkeeping (incl. 0-byte re-copy), snapshots, the `MACHINE_SUMMARY` line, and one end-to-end integration test that builds a synthetic Cowork workspace and subprocess-runs the migration (exclusions, idempotency, 0-byte heal). All fixtures are synthetic placeholders — no real data.
+- `tests/fixtures.py` — the **single source of truth** for test input: `build_synthetic_workspace(root)` materializes a fully synthetic Cowork workspace (no real data) in a temp dir; the integration + end-to-end tests reuse it. Also runnable standalone to eyeball a sample: `python3 tests/fixtures.py /tmp/sample`.
+- `tests/test_cowork_config.py` — `.env` loading + precedence resolution.
+- `tests/test_verify_migration.py` — verifier predicates (`parse_machine_summary`, `is_wellformed_jsonl`, `is_forbidden_added_path`), the invariant functions (I1–I6), `resolve_space_uuid`, `compute_verdict` precedence, and an end-to-end baseline→migrate→verify run (PASS + a forbidden-artifact FAIL).
+- `tests/test_migrate_cowork_sessions.py` — discovery/classification + space-resolution helpers, copy bookkeeping (incl. 0-byte re-copy), snapshots, the `MACHINE_SUMMARY` line, and an integration test that subprocess-runs the migration (exclusions, idempotency, 0-byte heal). All fixtures are synthetic placeholders — no real data.
