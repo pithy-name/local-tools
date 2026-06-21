@@ -168,6 +168,12 @@ class ClassifySessionJsonls(unittest.TestCase):
         self.assertEqual(c["non_project"], 1)
         self.assertEqual(c["transcripts"], [])
 
+    def test_agent_star_in_projects_counted(self):
+        # FIX: agent-*.jsonl under /.claude/projects/ (not /subagents/) is excluded
+        # AND counted (no longer a silent drop).
+        c = m._classify_session_jsonls(self._session())
+        self.assertEqual(c["agent_excluded"], 1)
+
     def test_missing_dir(self):
         c = m._classify_session_jsonls(_tmp() / "nope")
         self.assertEqual(c["transcripts"], [])
@@ -363,6 +369,24 @@ class BuildMachineSummary(unittest.TestCase):
         self.assertFalse(payload["dry_run"])
 
 
+# ── List mode ──────────────────────────────────────────────────────────────────
+
+class ListMode(unittest.TestCase):
+    def test_list_prints_table_no_machine_summary(self):
+        ws = _tmp()
+        build_synthetic_workspace(ws)
+        r = subprocess.run(
+            [sys.executable, str(TOOL), "--list", "--workspace", str(ws)],
+            capture_output=True, text=True,
+        )
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("Test Space", r.stdout)        # the synthetic space name
+        self.assertIn("Space name", r.stdout)        # table header (format-regression guard)
+        self.assertIn("Sessions", r.stdout)
+        self.assertRegex(r.stdout, r"Test Space\s+1\b")  # one session for this space
+        self.assertNotIn("MACHINE_SUMMARY", r.stdout)  # --list never migrates
+
+
 # ── Integration: full migration against a synthetic workspace ──────────────────
 
 class Integration(unittest.TestCase):
@@ -425,6 +449,46 @@ class Integration(unittest.TestCase):
         s = self._summary(r2.stdout)
         self.assertEqual(s["transcripts_copied"], 1)
         self.assertGreater((target / f"{TX_UUID}.jsonl").stat().st_size, 0)
+
+    def test_name_mode_migration(self):
+        # exercise the name-resolution path in main() (all other e2e tests use UUID mode)
+        ws = self._build_workspace()
+        target = _tmp() / "proj-target"
+        r = subprocess.run(
+            [sys.executable, str(TOOL), "--space", "Test Space",
+             "--workspace", str(ws), "--target", str(target), "--create-target"],
+            capture_output=True, text=True,
+        )
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertTrue((target / f"{TX_UUID}.jsonl").is_file())
+        self.assertEqual(self._summary(r.stdout)["transcripts_copied"], 1)
+
+    def test_dry_run_create_target_does_not_create(self):
+        ws = self._build_workspace()
+        target = _tmp() / "should-not-exist"
+        r = subprocess.run(
+            [sys.executable, str(TOOL), "--space", SPACE_UUID, "--workspace", str(ws),
+             "--target", str(target), "--create-target", "--dry-run"],
+            capture_output=True, text=True,
+        )
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertFalse(target.exists())            # dry-run must not create it
+        self.assertIn("would create", r.stdout.lower())
+
+    def test_only_matched_space_migrates(self):
+        from fixtures import TX2_UUID
+        ws = _tmp()
+        build_synthetic_workspace(ws, with_second_space=True)
+        target = _tmp() / "proj-target"
+        r = subprocess.run(
+            [sys.executable, str(TOOL), "--space", SPACE_UUID, "--workspace", str(ws),
+             "--target", str(target), "--create-target"],
+            capture_output=True, text=True,
+        )
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self._summary(r.stdout)["transcripts_copied"], 1)
+        self.assertTrue((target / f"{TX_UUID}.jsonl").is_file())
+        self.assertFalse((target / f"{TX2_UUID}.jsonl").exists())  # other space NOT migrated
 
 
 if __name__ == "__main__":

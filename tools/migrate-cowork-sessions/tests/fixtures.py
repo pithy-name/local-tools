@@ -25,14 +25,20 @@ from pathlib import Path
 SPACE_UUID = "11111111-1111-1111-1111-111111111111"
 SESS_UUID = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
 TX_UUID = "22222222-2222-2222-2222-222222222222"
+SPACE2_UUID = "33333333-3333-3333-3333-333333333333"
+SESS2_UUID = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
+TX2_UUID = "44444444-4444-4444-4444-444444444444"
 
 
-def build_synthetic_workspace(root: Path) -> dict:
+def build_synthetic_workspace(root: Path, with_second_space: bool = False) -> dict:
     """Materialize the synthetic workspace under `root`. Returns key ids + paths."""
     root = Path(root)
     root.mkdir(parents=True, exist_ok=True)
+    spaces_list = [{"id": SPACE_UUID, "name": "Test Space"}]
+    if with_second_space:
+        spaces_list.append({"id": SPACE2_UUID, "name": "Second Space"})
     (root / "spaces.json").write_text(
-        json.dumps([{"id": SPACE_UUID, "name": "Test Space"}]), encoding="utf-8")
+        json.dumps(spaces_list), encoding="utf-8")
     (root / f"local_{SESS_UUID}.json").write_text(
         json.dumps({"spaceId": SPACE_UUID, "title": "Sess 1"}), encoding="utf-8")
     proj = root / f"local_{SESS_UUID}" / ".claude" / "projects" / "proj"
@@ -47,9 +53,16 @@ def build_synthetic_workspace(root: Path) -> dict:
     mem.mkdir(parents=True, exist_ok=True)
     (mem / "note.md").write_text("# migrated note\n", encoding="utf-8")
     (mem / "MEMORY.md").write_text("# stale index\n", encoding="utf-8")
+    if with_second_space:
+        (root / f"local_{SESS2_UUID}.json").write_text(
+            json.dumps({"spaceId": SPACE2_UUID, "title": "Sess 2"}), encoding="utf-8")
+        proj2 = root / f"local_{SESS2_UUID}" / ".claude" / "projects" / "proj2"
+        proj2.mkdir(parents=True, exist_ok=True)
+        (proj2 / f"{TX2_UUID}.jsonl").write_text('{"type":"msg2"}\n', encoding="utf-8")
     return {
         "workspace": root, "space_uuid": SPACE_UUID, "sess_uuid": SESS_UUID,
         "tx_uuid": TX_UUID, "transcript_name": f"{TX_UUID}.jsonl",
+        "space2_uuid": SPACE2_UUID, "tx2_uuid": TX2_UUID,
     }
 
 

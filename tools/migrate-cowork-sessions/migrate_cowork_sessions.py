@@ -107,16 +107,17 @@ def candidate_title(session_meta: dict) -> str:
 def _classify_session_jsonls(session_dir: Path) -> dict:
     """Classify every *.jsonl under a session dir (filesystem read only).
     Returns counts/lists:
-      - transcripts:  list[Path] kept (under /.claude/projects/, not subagent/audit/agent-*)
-      - subagents:    count excluded as subagent transcripts (incl. agent-*.jsonl anywhere)
-      - audit:        count excluded as audit.jsonl
-      - non_project:  count of would-be transcripts excluded ONLY by the
-                      /.claude/projects/ path filter (signals silent exclusion)
+      - transcripts:    list[Path] kept (under /.claude/projects/, not subagent/audit/agent-*)
+      - subagents:      count excluded as subagent transcripts (files under a /subagents/ path)
+      - audit:          count excluded as audit.jsonl
+      - non_project:    count of would-be transcripts excluded ONLY by the
+                        /.claude/projects/ path filter (signals silent exclusion)
+      - agent_excluded: count of agent-*.jsonl under /.claude/projects/ but NOT under
+                        /subagents/ (excluded because I4 forbids them; counted for diagnostics)
     A file is kept iff: '/.claude/projects/' in path AND not a subagent AND not audit.
-    agent-*.jsonl under /.claude/projects/ but NOT under /subagents/ is silently
-    excluded (I4 forbids them) without incrementing any diagnostic counter.
     agent-*.jsonl under /subagents/ is counted in subagents."""
-    result: dict = {"transcripts": [], "subagents": 0, "audit": 0, "non_project": 0}
+    result: dict = {"transcripts": [], "subagents": 0, "audit": 0, "non_project": 0,
+                    "agent_excluded": 0}
     if not session_dir.is_dir():
         return result
     for p in session_dir.rglob("*.jsonl"):
@@ -134,8 +135,8 @@ def _classify_session_jsonls(session_dir: Path) -> dict:
             result["non_project"] += 1
         elif is_agent_star:
             # agent-*.jsonl inside /.claude/projects/ but NOT under /subagents/:
-            # excluded (I4 forbids them) but not counted in any diagnostic bucket.
-            pass
+            # excluded (I4 forbids them) and counted for operator diagnostics.
+            result["agent_excluded"] += 1
         else:
             result["transcripts"].append(p)
     return result
@@ -964,6 +965,17 @@ def main():
             f"WARNING: {non_project_total} *.jsonl file(s) in matched session dirs were "
             "excluded because they are not under a /.claude/projects/ path. If you expected "
             "transcripts here, the Cowork layout may differ from this tool's assumption.",
+            file=sys.stderr,
+        )
+
+    agent_excluded_total = sum(
+        _classify_session_jsonls(workspace / s["session_id"])["agent_excluded"]
+        for s in target_sessions
+    )
+    if agent_excluded_total:
+        print(
+            f"WARNING: {agent_excluded_total} agent-*.jsonl file(s) under /.claude/projects/ "
+            "were excluded as subagent transcripts (consistent with verifier invariant I4).",
             file=sys.stderr,
         )
 

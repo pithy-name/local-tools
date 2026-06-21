@@ -17,19 +17,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))         # tests dir: fi
 import verify_migration as vm
 from fixtures import build_synthetic_workspace, SPACE_UUID
 
-TOOL = Path(__file__).resolve().parent.parent / "migrate_cowork_sessions.py"
-
-
-class MachineSummary(unittest.TestCase):
-    def test_list_mode_emits_no_machine_summary(self):
-        # --list returns before any migration → must never print MACHINE_SUMMARY.
-        out = subprocess.run(
-            [sys.executable, str(TOOL), "--list"],
-            capture_output=True, text=True,
-        ).stdout
-        self.assertNotIn("MACHINE_SUMMARY", out)
-
-
 class Predicates(unittest.TestCase):
     def test_parse_ok(self):
         out = 'noise\nMACHINE_SUMMARY {"transcripts_copied": 3, "dry_run": false}\nmore'
@@ -123,10 +110,12 @@ class BaselineDirHint(unittest.TestCase):
 class Invariants(unittest.TestCase):
     """Direct coverage of the invariant functions (previously only predicates)."""
 
-    def _baseline(self, **files) -> Path:
+    def _baseline(self, files: dict) -> Path:
+        # files maps REAL baseline filenames (e.g. "memory_md.sha256") to content —
+        # no kwarg-name munging, so a future filename with odd chars can't be mangled.
         d = Path(tempfile.mkdtemp())
         for name, text in files.items():
-            (d / name.replace("__", ".")).write_text(text, encoding="utf-8")
+            (d / name).write_text(text, encoding="utf-8")
         return d
 
     def test_i1_pass_and_fail(self):
@@ -147,19 +136,29 @@ class Invariants(unittest.TestCase):
     def test_i5_absent_both_sides_passes(self):
         # FIX (Finding 9): lock the documented behavior — absent baseline AND
         # absent post both hash to "" → PASS (no false alarm).
-        bdir = self._baseline(memory_md__sha256="")
+        bdir = self._baseline({"memory_md.sha256": ""})
         target = Path(tempfile.mkdtemp())  # no memory/MEMORY.md
         self.assertEqual(vm.inv_i5(bdir, target)["status"], "PASS")
+
+    def test_i5_created_fails(self):
+        # Guards the absent==absent case from passing vacuously: baseline had no
+        # MEMORY.md but one EXISTS post-migration → I5 must FAIL (proves the check
+        # actually compares, rather than always-passing on an empty baseline).
+        bdir = self._baseline({"memory_md.sha256": ""})  # absent at baseline
+        target = Path(tempfile.mkdtemp())
+        (target / "memory").mkdir()
+        (target / "memory" / "MEMORY.md").write_text("created post-baseline\n")
+        self.assertEqual(vm.inv_i5(bdir, target)["status"], "FAIL")
 
     def test_i5_changed_fails(self):
         target = Path(tempfile.mkdtemp())
         (target / "memory").mkdir()
         (target / "memory" / "MEMORY.md").write_text("new content\n")
         post = vm.sha256_of_file(target / "memory" / "MEMORY.md")
-        bdir = self._baseline(memory_md__sha256="0" * 64 + "\n")  # different hash
+        bdir = self._baseline({"memory_md.sha256": "0" * 64 + "\n"})  # different hash
         self.assertEqual(vm.inv_i5(bdir, target)["status"], "FAIL")
         # and a matching baseline passes
-        bdir2 = self._baseline(memory_md__sha256=post + "\n")
+        bdir2 = self._baseline({"memory_md.sha256": post + "\n"})
         self.assertEqual(vm.inv_i5(bdir2, target)["status"], "PASS")
 
 
