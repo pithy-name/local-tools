@@ -20,23 +20,28 @@ read their config from a `.env` that lives *beside them*, so every command below
 cd tools/migrate-cowork-sessions
 ```
 
+These are plain Python CLI scripts — run them in **any terminal**; you do *not* need Claude Code open. (The companion runbook uses a Claude Code session for an integrated verify/assess flow, but that's optional.)
+
 **TL;DR:** Copies Cowork session transcripts + memory into a Claude Code project dir. One-time, copy-only, safe to re-run. Run all commands from the tool folder above, after creating your `.env` (see *Setup*).
 
 ```bash
 # See what spaces exist
 python3 migrate_cowork_sessions.py --list
+# ^ copy a Space name from the table; quote it if it contains spaces
 
 # Preview (no files changed)
-python3 migrate_cowork_sessions.py --space <space-name> --target ~/.claude/projects/<target-dir> --dry-run
+python3 migrate_cowork_sessions.py --space "<space-name>" --target ~/.claude/projects/<target-dir> --dry-run
 
 # Run it
-python3 migrate_cowork_sessions.py --space <space-name> --target ~/.claude/projects/<target-dir>
+python3 migrate_cowork_sessions.py --space "<space-name>" --target ~/.claude/projects/<target-dir>
 ```
 
 (or set `--space` / `--target` once in `.env` — see `demo.env`)
 
 **Finding `<target-dir>`** — Claude Code stores each project under an *encoded* directory name
-(your project's filesystem path with `/` turned into `-`). List them and use the **whole** name:
+(your project's filesystem path with `/` turned into `-`). The directory exists only after you've
+opened that project in Claude Code at least once (or you pass `--create-target` — see *Prerequisites*).
+List them and use the **whole** name:
 
 ```bash
 ls ~/.claude/projects/ | grep <keyword-from-your-project-name>
@@ -60,6 +65,15 @@ cp demo.env .env
 
 One-time migration of historical Cowork session transcripts, tool-results, and memory into the Claude Code project directory. This consolidates the past — it does not sync the two tools going forward.
 
+## Prerequisites
+
+1. **Quit Cowork entirely** (not just close individual sessions). Avoids file handle issues during copy.
+2. **Create + verify the Claude Code target directory.** Claude Code creates a project's directory the first time you open that project in it — so open the project in Claude Code once, then list the encoded dir name:
+   ```bash
+   ls ~/.claude/projects/ | grep <keyword-from-your-project-name>
+   ```
+   Pass the **full** path (e.g. `~/.claude/projects/-Users-alice-dev-my-project`) as `--target`. **If `--target` doesn't exist, the script exits with an error** — either open the project in Claude Code first (recommended, so the encoded name is correct), or pass `--create-target` to let the script create it (only after you've confirmed the encoded path is right).
+
 ## How discovery works
 
 Reads **sidecar** files (`local_*.json`) to find each session's `spaceId`, then filters to sessions belonging to the target project. (A *sidecar* is the small `local_<uuid>.json` metadata file next to each session directory `local_<uuid>/` — one per session.)
@@ -73,21 +87,12 @@ Steps:
    - its path contains `/.claude/projects/` (the location Claude wrote transcripts to). A `.jsonl` elsewhere in the session dir is excluded and counted as `non_project` — and the script prints a warning — so a layout mismatch is never silent.
    - it is **not** under a `/subagents/` path
    - it is **not** named `audit.jsonl`
-   - it is **not** an `agent-*.jsonl` (a subagent transcript, wherever it sits — this matches verifier invariant **I4**)
+   - it is **not** an `agent-*.jsonl` (a subagent transcript). Such a file under `/.claude/projects/` is excluded **and counted** (the script warns), matching verifier invariant **I4**.
 6. Copy the kept transcripts, each transcript's `<uuid>/tool-results/`, and the space's memory files
 
 `MEMORY.md` is excluded from the memory copy (it's an index file — copying it would overwrite the Claude Code project's own index).
 
 Safe to re-run: all copies skip existing files (a 0-byte file left by an interrupted prior copy is re-copied, not skipped, so a re-run heals it).
-
-## Prerequisites
-
-1. **Quit Cowork entirely** (not just close individual sessions). Avoids file handle issues during copy.
-2. **Create + verify the Claude Code target directory.** Claude Code creates a project's directory the first time you open that project in it — so open the project in Claude Code once, then list the encoded dir name:
-   ```bash
-   ls ~/.claude/projects/ | grep <keyword-from-your-project-name>
-   ```
-   Pass the **full** path (e.g. `~/.claude/projects/-Users-alice-dev-my-project`) as `--target`. **If `--target` doesn't exist, the script exits with an error** — either open the project in Claude Code first (recommended, so the encoded name is correct), or pass `--create-target` to let the script create it (only after you've confirmed the encoded path is right).
 
 ## Usage
 
@@ -155,7 +160,7 @@ The dry-run counts should match the real run; `errors` must be `0`, and `dry_run
 ## After running
 
 1. **Verify** — check Claude Code's history panel for migrated sessions. Spot-check that at least one transcript opens correctly.
-2. **Index memory** — Claude Code auto-loads context from the files listed in `<target>/memory/MEMORY.md` (the index; each line is a relative path + a short description). The migration copies the memory *files* but deliberately does NOT touch `MEMORY.md`, so add one index line per migrated file or they won't be surfaced in future sessions. Format + sequencing in *After verification passes* below.
+2. **Index memory** — Claude Code auto-loads context from the files listed in `<target>/memory/MEMORY.md` (the index; each line is a relative path + a short description). The migration copies the memory *files* but deliberately does NOT touch `MEMORY.md`, so add one index line per migrated file or they won't be surfaced in future sessions. **Do this AFTER you run `--verify`** (the runbook's step 5) — updating `MEMORY.md` before verifying trips invariant **I5** and produces a false FAIL. Format + sequencing in *After verification passes* below.
 3. **Archive** — archive the Cowork project via the Cowork UI (removes entry from `spaces.json`; session dirs on disk remain untouched). Only do this after verifying step 1.
 
 ## Known limitations (both versions)
@@ -163,7 +168,9 @@ The dry-run counts should match the real run; `errors` must be `0`, and `dry_run
 - **Stale `cwd` paths** — migrated transcripts contain the original working directory paths from Cowork. Claude Code will show them but the paths may not resolve locally.
 - **MEMORY.md requires manual update** — the script reminds you, but index entries must be added by hand.
 - **Post-archive re-run** — if the Cowork project is archived (removed from `spaces.json`), use `--space <uuid>` to match sessions by UUID directly against sidecars.
-- **Partial failure re-run** — safe; skip-existing makes re-runs idempotent.
+- **Partial failure re-run** — safe; skip-existing makes re-runs idempotent (a 0-byte file from an interrupted copy is re-copied, not skipped).
+- **Tool-results completeness isn't independently verified** — I2 cross-checks transcript counts, but no invariant cross-checks how many `tool-results/` files were copied. If a path assumption ever mismatched, the verdict could still be PASS with tool-results missing. Spot-check that a migrated session's tool calls render.
+- **Memory copy is non-recursive** — only `*.md` at the top level of the space's `memory/` is copied; files in subdirectories of `memory/` are not. (Cowork's memory dir is flat in practice; flagged for completeness.)
 
 ## Why certain files are excluded
 
@@ -189,6 +196,8 @@ python3 migrate_cowork_sessions.py --space "<SPACE_NAME>" --target <CLAUDE_PROJE
 # After migration: check invariants (--baseline-dir is the REPORTS dir, not baseline/)
 python3 verify_migration.py --verify --space "<SPACE_NAME>" --target <CLAUDE_PROJECT_DIR> --baseline-dir verification-reports/<ts>/
 ```
+
+If you skip the `tee` (or save it to a path other than the one `--baseline-dir` points at), `--verify` FAILs with *"no MACHINE_SUMMARY found"* — that captured stdout is I2's only oracle.
 
 Exit codes: `0` PASS (all 6 invariants), `1` PARTIAL PASS (you verified a dry-run — not a real verification; run the real migration and re-verify), `2` FAIL. A PASS confirms the migration was *consistent + clean*, NOT that the *right* sessions were selected — spot-check one session in the Claude Code UI.
 

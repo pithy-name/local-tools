@@ -59,7 +59,7 @@ If anything in the runbook conflicts with your default behavior, the runbook win
 
 Run these in order. Steps marked `(via !)` are shell commands the operator runs from Claude Code's `!` prompt (each `!` is a fresh subshell, which is why the timestamp is read from a file, not an env var). Steps marked OPTIONAL can be skipped.
 
-**0a. Open a fresh Claude Code session in `<TOOL_DIR>`** *(USER)* — one session for the whole runbook. *(New to Claude Code? It's a CLI: run `claude` from `<TOOL_DIR>` to open a session. Inside it, prefix any shell command with `!` to run it — each `!` is a fresh subshell, which is why the timestamp below is saved to a file rather than an env var.)*
+**0a. Open a fresh Claude Code session in `<TOOL_DIR>`** *(USER)* — one session for the whole runbook. *(New to Claude Code? It's a CLI: run `claude` from `<TOOL_DIR>` to open a session. Inside it, prefix any shell command with `!` to run it — each `!` is a fresh subshell, which is why the timestamp below is saved to a file rather than an env var. You can also run every `(via !)` command directly in a plain Terminal — just drop the `!`; the Claude Code session is only needed for the steps where Claude assesses output.)*
 
 **0b. Paste the kickoff prompt** (above) as the first message *(USER)* — so Claude reads the runbook + the BLOCKING transparency rule before any work.
 
@@ -116,7 +116,7 @@ cd <TOOL_DIR> && python3 verify_migration.py --verify \
 
 **8. Update MEMORY.md** *(CLAUDE, on USER request)* — Claude reads each migrated memory file and appends one-line index entries to `<CLAUDE_PROJECT_DIR>/memory/MEMORY.md`, matching the existing format. **Must run AFTER step 5** (I5 verifies the migration left MEMORY.md unchanged; this is the intentional human-directed edit).
 
-**9. Archive the `<SPACE_NAME>` Cowork project** *(USER)* — **two passes, in order:** (1) archive each **session conversation** individually first, THEN (2) archive the **project** overall. Cowork's project-archive does NOT cascade to its sessions — archiving the project alone leaves orphaned session entries. Only do this after step 7 succeeds (archiving is hard to undo). *(Approximate Cowork UI path: open each conversation → its `⋯` / overflow menu → Archive; then the project list → the project's `⋯` menu → Archive Project. Exact labels may differ by Cowork version.)*
+**9. Archive the `<SPACE_NAME>` Cowork project** *(USER)* — **two passes, in order:** (1) archive each **session conversation** individually first, THEN (2) archive the **project** overall. Cowork's project-archive does NOT cascade to its sessions — archiving the project alone leaves orphaned session entries. Only do this after step 7 succeeds (archiving is hard to undo). *(Approximate Cowork UI path: open each conversation → its `⋯` / overflow menu → Archive; then the project list → the project's `⋯` menu → Archive Project. Exact labels may differ by Cowork version. If you can't find the control, check Cowork's help — and do NOT move to step 10 until the **sessions** (not just the project) are archived.)*
 
 **10. (OPTIONAL) Delete the step-2b backup** *(USER via `!`)* — only if you made one, and only after step 7.
 
@@ -147,7 +147,7 @@ After USER runs `--verify`, USER asks Claude to assess. Claude:
 |---------|---------|----------------------|
 | **PASS** | All 6 invariants passed. | Proceed to step 7 (UI spot-check). **Caveat:** PASS confirms the migration is *consistent with its own report and clean* — it does NOT prove the *right* sessions were selected. Step 7 is your selection check; do not skip it before archiving (step 9). |
 | **PARTIAL PASS** | The migration output was a **dry-run** — structural invariants are vacuous (nothing copied). **Only** reported when no real failure/error is present; a real CRITICAL failure or `migration_errors > 0` overrides it to FAIL (an accidental dry-run can never hide a real problem). | Not a real verification. Run the real migration (step 4, no `--dry-run`, teed to `migration-output.txt`) and re-verify (step 5). |
-| **FAIL** | A CRITICAL invariant failed, OR `migration_errors > 0` (the migration reported copy errors), OR I2 had no `MACHINE_SUMMARY` oracle. | STOP. Do NOT proceed to step 7 or archive. See "Recovery on FAIL". |
+| **FAIL** | A CRITICAL invariant failed (including I2 when its `MACHINE_SUMMARY` oracle is missing), OR `migration_errors > 0` (the migration reported copy errors). | STOP. Do NOT proceed to step 7 or archive. See "Recovery on FAIL". |
 
 ## Recovery on FAIL
 

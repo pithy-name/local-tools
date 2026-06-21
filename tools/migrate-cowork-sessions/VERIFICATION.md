@@ -50,7 +50,8 @@ I2 compares two **independent** measurements: the migrate script's self-*reporte
 
 **I2 is a CONSISTENCY check, not a completeness check.** It does **not** detect:
 - a **no-op** (`copied=0`, `added=0` → PASS — correct for a consistency check, but it can't tell a legitimately-empty migration from one that wrongly did nothing; I2 emits a NOTE when `copied=0`);
-- a **drop masked by skip-existing** (a transcript whose stem already exists at the target — or a same-stem collision across two sessions — is skipped, so reported/measured counts stay consistent).
+- a **drop masked by skip-existing** (a transcript whose stem already exists at the target — or a same-stem collision across two sessions — is skipped, so reported/measured counts stay consistent);
+- **tool-results completeness** — I2 cross-checks `transcripts_copied` only. No invariant cross-checks the `tool_results_copied` count against a measured `tool-results/` delta, so a tool-results copy that silently did nothing (e.g. a path-assumption mismatch) would not be caught. Spot-check that a migrated session's tool calls render.
 
 Neither I2 nor any invariant here certifies that discovery selected the **right** sessions — that is unverifiable without a ground-truth fixture (which is exactly what makes this suite generic). The migrate script's runtime BEFORE/AFTER/DIFF + the operator's dry-run eyeball remain the human check on *selection*.
 
@@ -62,7 +63,7 @@ If `migration-output.txt` reports `dry_run: true`, the verifier prints a WARNING
 
 Verdict precedence (computed by `compute_verdict`, highest first):
 
-1. **FAIL** (exit 2): any CRITICAL invariant FAILed, OR `migration_errors > 0` (the migration's `MACHINE_SUMMARY` reported copy errors), OR I2 had no oracle (missing `MACHINE_SUMMARY`). Real failures and copy-errors are checked **before** the dry-run downgrade, so they are never hidden.
+1. **FAIL** (exit 2): any CRITICAL invariant FAILed — including I2, which FAILs when its `MACHINE_SUMMARY` oracle is missing — OR `migration_errors > 0` (the migration's `MACHINE_SUMMARY` reported copy errors). Real failures and copy-errors are checked **before** the dry-run downgrade, so they are never hidden.
 2. **PARTIAL PASS** (exit 1): the migration output was a dry-run AND nothing above failed (see *Dry-run handling*).
 3. **PASS** (exit 0): all 6 invariants pass, no copy errors.
 
