@@ -1,0 +1,11 @@
+# Local config with real account IDs — never commit.
+.env
+
+# Run evidence (real UUIDs/paths); regenerated per run, not shipped.
+verification-reports/
+
+# Exported session transcripts dropped here by /export — contain real IDs.
+*.txt
+
+# Design-rationale working doc — LOCAL, not shipped (same convention as redaction-tool).
+decisions.md
