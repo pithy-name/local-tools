@@ -11,9 +11,13 @@ import tempfile
 import unittest
 from pathlib import Path
 
-import verify_migration as vm
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # tool dir: tool modules
+sys.path.insert(0, str(Path(__file__).resolve().parent))         # tests dir: fixtures
 
-TOOL = Path(__file__).resolve().parent / "migrate_cowork_sessions.py"
+import verify_migration as vm
+from fixtures import build_synthetic_workspace, SPACE_UUID
+
+TOOL = Path(__file__).resolve().parent.parent / "migrate_cowork_sessions.py"
 
 
 class MachineSummary(unittest.TestCase):
@@ -157,6 +161,148 @@ class Invariants(unittest.TestCase):
         # and a matching baseline passes
         bdir2 = self._baseline(memory_md__sha256=post + "\n")
         self.assertEqual(vm.inv_i5(bdir2, target)["status"], "PASS")
+
+
+class InvI2(unittest.TestCase):
+    def test_no_oracle_fails(self):
+        self.assertEqual(vm.inv_i2(set(), None)["status"], "FAIL")
+
+    def test_dry_run_skipped(self):
+        out = 'MACHINE_SUMMARY {"transcripts_copied": 0, "dry_run": true}'
+        self.assertEqual(vm.inv_i2(set(), out)["status"], "SKIPPED")
+
+    def test_equal_passes(self):
+        out = 'MACHINE_SUMMARY {"transcripts_copied": 3, "dry_run": false}'
+        self.assertEqual(vm.inv_i2({"a", "b", "c"}, out)["status"], "PASS")
+
+    def test_equal_zero_passes_with_note(self):
+        out = 'MACHINE_SUMMARY {"transcripts_copied": 0, "dry_run": false}'
+        r = vm.inv_i2(set(), out)
+        self.assertEqual(r["status"], "PASS")
+        self.assertIn("0", r["notes"])
+
+    def test_added_gt_copied_fails(self):
+        out = 'MACHINE_SUMMARY {"transcripts_copied": 1, "dry_run": false}'
+        self.assertEqual(vm.inv_i2({"a", "b"}, out)["status"], "FAIL")
+
+    def test_added_lt_copied_fails(self):
+        out = 'MACHINE_SUMMARY {"transcripts_copied": 3, "dry_run": false}'
+        self.assertEqual(vm.inv_i2({"a"}, out)["status"], "FAIL")
+
+
+class InvI6(unittest.TestCase):
+    def _setup(self, mutate_after=False, memory_source=True):
+        ws = Path(tempfile.mkdtemp())
+        (ws / "spaces.json").write_text('{"s":1}', encoding="utf-8")
+        (ws / "local_a").mkdir()
+        (ws / "local_b").mkdir()
+        mem = ws / "spaces" / "sp" / "memory"
+        mem.mkdir(parents=True)
+        (mem / "x.md").write_text("x")
+        reports = Path(tempfile.mkdtemp())
+        bdir = reports / "baseline"
+        bdir.mkdir(parents=True)
+        (bdir / "cowork_spaces_json.sha256").write_text(
+            vm.sha256_of_file(ws / "spaces.json") + "\n")
+        (bdir / "cowork_memory_listing.txt").write_text("x.md\n")
+        (bdir / "cowork_session_dir_count.txt").write_text("2\n")
+        if mutate_after:
+            (ws / "spaces.json").write_text('{"s":2}', encoding="utf-8")
+        cfg = {"spaces_json": ws / "spaces.json",
+               "memory_source": (mem if memory_source else None), "workspace": ws}
+        return cfg, bdir
+
+    def test_all_match_pass(self):
+        cfg, bdir = self._setup()
+        self.assertEqual(vm.inv_i6(cfg, bdir)["status"], "PASS")
+
+    def test_spaces_json_mutation_fails(self):
+        cfg, bdir = self._setup(mutate_after=True)
+        self.assertEqual(vm.inv_i6(cfg, bdir)["status"], "FAIL")
+
+    def test_memory_source_none_skips_subcheck(self):
+        cfg, bdir = self._setup(memory_source=False)
+        r = vm.inv_i6(cfg, bdir)
+        self.assertEqual(r["status"], "PASS")
+        self.assertEqual(r["computed"]["cowork_memory_match"], "SKIPPED (space unresolved)")
+
+
+class ResolveSpaceUuid(unittest.TestCase):
+    def _spaces_file(self, obj):
+        p = Path(tempfile.mkdtemp()) / "spaces.json"
+        p.write_text(json.dumps(obj), encoding="utf-8")
+        return p
+
+    def test_none_space(self):
+        self.assertIsNone(vm.resolve_space_uuid(None, Path("/nope/spaces.json")))
+
+    def test_uuid_passthrough(self):
+        u = "11111111-1111-1111-1111-111111111111"
+        self.assertEqual(vm.resolve_space_uuid(u, Path("/nope/spaces.json")), u)
+
+    def test_name_resolves(self):
+        f = self._spaces_file([{"id": "sp1", "name": "My Space"}])
+        self.assertEqual(vm.resolve_space_uuid("My Space", f), "sp1")
+
+    def test_ambiguous_returns_none(self):
+        f = self._spaces_file([{"id": "a", "name": "Dup"}, {"id": "b", "name": "Dup"}])
+        self.assertIsNone(vm.resolve_space_uuid("Dup", f))
+
+    def test_missing_file_name_unresolved(self):
+        self.assertIsNone(vm.resolve_space_uuid("Whatever", Path("/nope/spaces.json")))
+
+
+class VerifySuiteEndToEnd(unittest.TestCase):
+    MIGRATE = Path(__file__).resolve().parent.parent / "migrate_cowork_sessions.py"
+    VERIFY = Path(__file__).resolve().parent.parent / "verify_migration.py"
+
+    def _ws_and_target(self):
+        ws = Path(tempfile.mkdtemp())
+        build_synthetic_workspace(ws)
+        target = Path(tempfile.mkdtemp()) / "target"
+        return ws, target, SPACE_UUID
+
+    def _baseline(self, ws, target, space, reports):
+        return subprocess.run(
+            [sys.executable, str(self.VERIFY), "--baseline", "--workspace", str(ws),
+             "--target", str(target), "--space", space, "--output-dir", str(reports)],
+            capture_output=True, text=True)
+
+    def _migrate(self, ws, target, space, reports):
+        r = subprocess.run(
+            [sys.executable, str(self.MIGRATE), "--space", space, "--workspace", str(ws),
+             "--target", str(target), "--create-target"], capture_output=True, text=True)
+        (reports / "migration-output.txt").write_text(r.stdout, encoding="utf-8")
+        return r
+
+    def _verify(self, ws, target, space, reports):
+        return subprocess.run(
+            [sys.executable, str(self.VERIFY), "--verify", "--workspace", str(ws),
+             "--target", str(target), "--space", space, "--baseline-dir", str(reports)],
+            capture_output=True, text=True)
+
+    def test_end_to_end_pass(self):
+        ws, target, space = self._ws_and_target()
+        reports = Path(tempfile.mkdtemp()) / "reports"
+        self.assertEqual(self._baseline(ws, target, space, reports).returncode, 0)
+        self.assertEqual(self._migrate(ws, target, space, reports).returncode, 0)
+        v = self._verify(ws, target, space, reports)
+        self.assertEqual(v.returncode, 0, v.stderr + v.stdout)
+        summary = json.loads((reports / "summary.json").read_text())
+        self.assertEqual(summary["verdict"], "PASS")
+        self.assertEqual(summary["migration_errors"], 0)
+
+    def test_end_to_end_fail_on_forbidden_artifact(self):
+        ws, target, space = self._ws_and_target()
+        reports = Path(tempfile.mkdtemp()) / "reports"
+        self._baseline(ws, target, space, reports)
+        self._migrate(ws, target, space, reports)
+        (target / "agent-evil.jsonl").write_text('{"x":1}\n', encoding="utf-8")
+        v = self._verify(ws, target, space, reports)
+        self.assertEqual(v.returncode, 2, v.stdout)
+        summary = json.loads((reports / "summary.json").read_text())
+        self.assertEqual(summary["verdict"], "FAIL")
+        self.assertIn("I4", summary["critical_failures"])
 
 
 if __name__ == "__main__":

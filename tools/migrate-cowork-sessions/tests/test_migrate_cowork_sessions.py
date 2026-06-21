@@ -18,13 +18,13 @@ import unittest
 from contextlib import redirect_stderr
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # tool dir: tool modules
+sys.path.insert(0, str(Path(__file__).resolve().parent))         # tests dir: fixtures
+
 import migrate_cowork_sessions as m
+from fixtures import build_synthetic_workspace, SPACE_UUID, SESS_UUID, TX_UUID
 
-TOOL = Path(__file__).resolve().parent / "migrate_cowork_sessions.py"
-
-SPACE_UUID = "11111111-1111-1111-1111-111111111111"
-SESS_UUID = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
-TX_UUID = "22222222-2222-2222-2222-222222222222"
+TOOL = Path(__file__).resolve().parent.parent / "migrate_cowork_sessions.py"
 
 
 def _tmp() -> Path:
@@ -368,21 +368,7 @@ class BuildMachineSummary(unittest.TestCase):
 class Integration(unittest.TestCase):
     def _build_workspace(self) -> Path:
         ws = _tmp()
-        (ws / "spaces.json").write_text(json.dumps([{"id": SPACE_UUID, "name": "Test Space"}]))
-        (ws / f"local_{SESS_UUID}.json").write_text(
-            json.dumps({"spaceId": SPACE_UUID, "title": "Sess 1"}))
-        proj = ws / f"local_{SESS_UUID}" / ".claude" / "projects" / "proj"
-        proj.mkdir(parents=True)
-        (proj / f"{TX_UUID}.jsonl").write_text('{"type":"msg"}\n')
-        (proj / TX_UUID / "tool-results").mkdir(parents=True)
-        (proj / TX_UUID / "tool-results" / "r1.json").write_text('{"r":1}')
-        (proj / "subagents").mkdir()
-        (proj / "subagents" / "agent-x.jsonl").write_text('{"s":1}\n')
-        (proj / "audit.jsonl").write_text('{"audit":1}\n')
-        mem = ws / "spaces" / SPACE_UUID / "memory"
-        mem.mkdir(parents=True)
-        (mem / "note.md").write_text("# migrated note\n")
-        (mem / "MEMORY.md").write_text("# stale index\n")
+        build_synthetic_workspace(ws)  # single source of truth (tests/fixtures.py)
         return ws
 
     def _run(self, ws: Path, target: Path):
