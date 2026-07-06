@@ -141,7 +141,7 @@ python3 migrate_cowork_sessions.py \
 
 ```
 Available Cowork spaces in:
-  /Users/alice/Library/Application Support/Claude/local-agent-mode-sessions/<outer>/<inner>
+  /path/to/Library/Application Support/Claude/local-agent-mode-sessions/<outer>/<inner>
 
   Space name                                 Sessions  Space ID
   ------------------------------------------ --------  ------------------------------------
