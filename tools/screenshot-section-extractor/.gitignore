@@ -6,6 +6,7 @@ ocr
 
 # keep your real screenshots out of the repo; point IMAGE_DIR at them instead
 # (the committed demo/ images are synthetic and safe)
+demo/out.md
 
 # python / macOS noise
 __pycache__/

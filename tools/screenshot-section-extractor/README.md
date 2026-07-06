@@ -77,6 +77,11 @@ Every key is documented in `demo.env`. Heading/stop values are **regexes** match
 against OCR text that has been lowercased and stripped of punctuation, so write
 them lowercase. `.env` is gitignored — it holds your real values.
 
+**Note on defaults:** Config keys have hardcoded defaults (e.g., `SELF_X0` defaults to `"0.28"`,
+`OCR_SCALE` to `"3.0"`). If `.env` is missing or misnamed, the tool silently falls back to
+these demo geometry values when running against real data. Always verify your loaded config
+matches the form you're processing (check that column x-bands match your layout).
+
 ### Calibration profiles
 
 `demo.env`/`.env` ship two column-geometry profiles:
@@ -100,6 +105,8 @@ python3 extract_section.py --debug IMAGE_DIR/one.png   # print one screenshot's 
 python3 extract_section.py --readcrops IMAGE_DIR/one.png   # save legible section crops to verify
 ```
 
+**`--readcrops` output:** Saves crop images to `/tmp/ocr_verify/<image_stem>/` (where `<image_stem>` is the PNG filename without extension, spaces replaced with underscores). Images are written in reading order: `self_00.png`, `self_01.png`, … (top to bottom), and same for `manager_*.png`.
+
 ## Demo
 
 A synthetic, fully **anonymized** example ships in [`demo/`](demo/) — invented
@@ -113,7 +120,7 @@ Reproduce it:
 
 ```bash
 cp demo.env .env
-python3 extract_section.py demo demo/out.md
+python3 extract_section.py demo /tmp/out.md
 ```
 
 Excerpt of the output:
