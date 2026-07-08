@@ -41,7 +41,7 @@ If you've never run a Python script from the terminal before, follow these. At t
    ```
 3. Edit the `TARGET_DIRECTORY` line near the top so it points to the folder you want scanned. Use the full path, in quotes. Example:
    ```python
-   TARGET_DIRECTORY = "/Users/yourname/Documents/folder-to-check"
+   TARGET_DIRECTORY = "/path/to/folder-to-check"
    ```
    Tip: in Finder, right-click the folder while holding `Option` and choose "Copy as Pathname" to get the full path.
 4. (Optional) Tweak the other settings in the same block:
