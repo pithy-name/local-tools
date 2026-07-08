@@ -1,0 +1,14 @@
+# your real config (subject name + tuned values) — never commit
+.env
+
+# compiled OCR helper (build with: swiftc -O ocr.swift -o ocr)
+ocr
+
+# keep your real screenshots out of the repo; point IMAGE_DIR at them instead
+# (the committed demo/ images are synthetic and safe)
+demo/out.md
+
+# python / macOS noise
+__pycache__/
+*.pyc
+.DS_Store
