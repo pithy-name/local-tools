@@ -18,7 +18,7 @@ Each tool lives in its own folder under `tools/` with a README containing both a
 ## Requirements
 
 - Python 3.11+
-- macOS recommended (the redaction tool uses Apple Vision OCR with a Tesseract fallback); the plain file utilities are cross-platform.
+- macOS recommended
 
 Most utilities run with no setup:
 

@@ -4,11 +4,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this repo is
 
-Scratch workspace for local AI tooling experiments. Not a single project — a loose collection of independent Python CLI tools, one-off migration scripts, and planning docs. Privacy-first: tools default to local execution, no network calls at runtime.
+Workspace for local AI tooling experiments. Not a single project — a collection of independent Python CLI tools and scripts. Privacy-first: tools default to local execution, no network calls at runtime.
 
 No build system, no top-level package, no shared dependency manifest, no test runner. Each tool is self-contained in its own folder with its own README and (if needed) its own `.venv`. There is no monorepo glue — touching one tool does not affect another.
-
-Target machine: a 16GB Apple Silicon Mac. Local-model ceiling is ~8–10B quantized (Q4/Q5) — keep this in mind for any model-selection work, especially `plans/local-ai-toolkit-prd.md`.
 
 Git repository (`main` branch).
 
@@ -35,7 +33,3 @@ Verify by running with `--dry-run` against sample data. Run test executions in a
 - When superseding a file, move the old one to `archive/<name>_v1.<ext>` — do not leave dead files in active dirs.
 - Docs edits are additive — append to existing READMEs; do not rewrite or remove existing content.
 - Three-audience doc separation — spec readers, runbook users, and script users get separate docs (e.g. `TESTING.md` vs operator runbook vs tool `README.md`); do not bloat one doc to serve all three.
-- `.cowork-sessions.md` files are auto-generated session indexes; do not read unless the user asks about prior Cowork sessions.
-
-
-
