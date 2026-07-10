@@ -15,27 +15,17 @@ glob — lives in a local `.env`. Copy `demo.env`, edit, run.
 
 ---
 
-## Why I built it (and why off-the-shelf didn't fit)
+## Why I built it
 
 The source material was a stack of **confidential HR-document
 screenshots**. The task was never "OCR an image" — lots of tools do that. It was:
 *pull one specific section from the right column of a particular two-column
-layout, verbatim, across dozens of screenshots, into clean Markdown.* Build vs.
-buy:
+layout, verbatim, across dozens of screenshots, into clean Markdown.*
 
-- **Cloud OCR** (Google Cloud Vision, AWS Textract, Azure AI Document
-  Intelligence, Adobe) uploads images to remote servers, where they can be cached
-  and pass through logging / CDN layers before reaching the OCR service. For
-  confidential HR documents that's a non-starter, and most workplaces' **data-loss-
-  prevention (DLP) policies block exactly this kind of cloud upload.** Disqualified
-  on privacy. ([on-device vs cloud OCR](https://scanlens.io/blog/on-device-vs-cloud-ocr))
-- **Local OCR engines** (Tesseract, IronOCR, ABBYY) keep data on the machine, but
-  they hand back raw text or bounding boxes. None of them do the actual task here:
-  locate a *named section between two heading anchors*, in a *chosen column*, and
-  *reflow it to Markdown across a batch*. That orchestration is the bespoke part.
-- **Apple Vision** was chosen for the OCR layer because it is on-device (privacy),
-  ships with macOS (zero install, zero dependencies), and on ordinary documents now
-  matches cloud accuracy. ([on-device vs cloud OCR](https://scanlens.io/blog/on-device-vs-cloud-ocr))
+**Apple Vision** does the OCR layer: it's on-device, so confidential documents
+never leave the machine; it ships with macOS (zero install, zero dependencies);
+and on ordinary documents it now matches cloud accuracy. ([on-device vs cloud
+OCR](https://scanlens.io/blog/on-device-vs-cloud-ocr))
 
 In short: **buy the wheel** (the OCR engine), **build the cart** (the targeted
 extraction + reflow).
@@ -82,6 +72,14 @@ them lowercase. `.env` is gitignored — it holds your real values.
 these demo geometry values when running against real data. Always verify your loaded config
 matches the form you're processing (check that column x-bands match your layout).
 
+To verify: run `python3 extract_section.py --debug IMAGE_DIR/one.png` on a real
+screenshot and confirm both sections come back non-empty and read as
+expected — an empty or truncated section usually means a heading regex or
+x-band doesn't match your form. For a visual check, `--readcrops` (see
+[Usage](#usage) below) saves the exact crop images the OCR pass reads, so you
+can eyeball whether each crop is cleanly bounded to the right column and the
+right heading-to-stop span.
+
 ### Calibration profiles
 
 `demo.env`/`.env` ship two column-geometry profiles:
@@ -123,23 +121,7 @@ cp demo.env .env
 python3 extract_section.py demo /tmp/out.md
 ```
 
-Excerpt of the output:
-
-```markdown
-## February 2023
-
-### Self assessment
-Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod
-tempor incididunt ut labore et dolore magna aliqua.
-
-Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut
-aliquip ex ea commodo consequat.
-
-### Manager assessment — about Jordan Rivera
-Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia
-deserunt mollit anim id est laborum.
-...
-```
+See [`demo/sample-output.md`](demo/sample-output.md) for the full output.
 
 ## Limitations
 
