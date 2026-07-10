@@ -19,6 +19,7 @@ Git repository (`main` branch).
   - `find-files/find_files.py` — `python find_files.py [directory] [extension]` (defaults: cwd, `.py`)
   - `find-empty-folders/find_empty_folders.py` — `python find_empty_folders.py [directory]`
   - `search-session-logs/search_session_logs.py` — `python search_session_logs.py <query> [directory]` (searches `.claude/session-logs/`)
+  - `migrate-cowork-sessions/` — one-time Cowork→Claude Code transcript+memory migration + a property-based verifier (`verify_migration.py`); stdlib-only, config via gitignored `.env` (`demo.env` template). Has its own nested `CLAUDE.md`, `tests/` (`python3 -m unittest discover -s tests`), operator runbook, and `VERIFICATION.md`.
 
 
 ### Testing
