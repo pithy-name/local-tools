@@ -594,7 +594,9 @@ def process_html(
     html = src.read_text(encoding="utf-8", errors="replace")
     soup = BeautifulSoup(html, "html.parser")
     total = 0
-    SKIP_TAGS = {"script", "style", "code", "pre"}
+    # <code>/<pre> are VISIBLE text and get redacted like any other; only
+    # non-rendered <script>/<style> bodies are passed through untouched.
+    SKIP_TAGS = {"script", "style"}
 
     # Snapshot each link's ORIGINAL visible text before redaction, so we can tell a
     # descriptive label ("QA Notes") from a link whose text WAS the URL.
