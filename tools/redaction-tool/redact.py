@@ -72,12 +72,16 @@ DEFAULT_CONFIG: dict = {
                                  # per-range box, with whole-line fallback) instead of the whole
                                  # OCR line. Default off = conservative whole-line blackout.
     "redact_filenames": False,   # opt-in: rename ALIASED custom_keyword matches in OUTPUT file +
-                                 # dir NAMES → their pseudonym (originals untouched). SUBSTRING match
-                                 # (filenames embed terms without word boundaries). PLAIN (no-alias)
+                                 # dir NAMES → their pseudonym (originals untouched). STANDALONE match:
+                                 # the keyword must not be glued to another letter/digit; `_` counts as
+                                 # a separator (was SUBSTRING until 2026-10-06). PLAIN (no-alias)
                                  # keywords are NOT renamed — they're flagged in the report +
                                  # redacted/_filename-flags.txt. Renames → redacted/_filename-renames.txt.
-    "filename_min_match_len": 4, # filename matching skips keywords shorter than this (avoids 'ed'/'mark'
-                                 # false hits); skipped terms are surfaced in the report. Lower at your risk.
+    "filename_min_match_len": 1, # legacy gate, off at 1: filename matching skips keywords shorter than
+                                 # this; skipped terms are surfaced in the report. Was 4 while matching
+                                 # was substring (to stop 'ed'/'mark' hitting inside words) — standalone
+                                 # matching makes it unnecessary, and raising it leaves short names in
+                                 # filenames.
     "ocr": {
         "use_apple_vision": True,   # on-device Apple OCR (M-series Mac)
         "fallback_tesseract": True, # fall back to Tesseract if Vision unavailable
@@ -1102,8 +1106,8 @@ def run(input_dir: Path, cfg: dict, dry_run: bool, report_path: Optional[str] = 
 
     # Filename redaction (opt-in): plan the redacted OUTPUT names for the whole candidate
     # tree up front — so collisions resolve globally and --dry-run previews exactly what a
-    # real run writes. Names match by SUBSTRING (filenames embed terms without word
-    # boundaries); originals are never renamed. See filename_redactor.py.
+    # real run writes. Names match STANDALONE keywords only (`_` is a separator; a keyword
+    # inside a longer word is left alone); originals are never renamed. See filename_redactor.py.
     redact_filenames = bool(cfg.get("redact_filenames"))
     fn_plan: dict = {}
     fn_redactor = None
@@ -1114,7 +1118,7 @@ def run(input_dir: Path, cfg: dict, dry_run: bool, report_path: Optional[str] = 
             collect_filename_flags, render_flags_file)
         fn_redactor = FilenameRedactor(
             normalize_keywords(cfg),
-            min_len=cfg.get("filename_min_match_len", 4))
+            min_len=cfg.get("filename_min_match_len", 1))
         fn_plan, _ = plan_tree(
             [str(f.relative_to(input_dir)) for f in files], fn_redactor)
 
