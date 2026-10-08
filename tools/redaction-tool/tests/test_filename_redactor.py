@@ -3,11 +3,8 @@
 Runs under system python3 (stdlib only). Mirrors test_keyword_redactor.py's layout.
 
 Two key rules, both deliberate:
-  1. STANDALONE match — a keyword matches only when it is not glued to another letter or
-     digit. `_` counts as a separator (unlike the content engine's `\\b`), so
-     `asmith_1on1.png` is still caught, while a keyword INSIDE a longer word (`rice` in
-     `price`) is left alone. (Was plain SUBSTRING matching until 2026-10-06, which put
-     aliases in the middle of unrelated words.)
+  1. STANDALONE match — the rule is described in README.md → "Redacting filenames";
+     TestStandaloneOnly below pins each case.
   2. ALIASED keywords only get RENAMED (→ their pseudonym). PLAIN (blackout) keywords are
      NOT renamed — they're only FLAGGED (a plain `█████`-style token is useless in a
      filename, and the user tracks identities by pseudonym). A plain keyword found in an
@@ -88,8 +85,8 @@ class TestRedactString(unittest.TestCase):
 
 # Short everyday words that are also names: the standalone-only regression cases.
 WORDS = [
-    {"find": "tom", "replace": "[ENG-01]"},
-    {"find": "rice", "replace": "[ENG-02]"},
+    {"find": "bob", "replace": "[ENG-01]"},
+    {"find": "rose", "replace": "[ENG-02]"},
     {"find": "bort", "replace": None},
 ]
 
@@ -102,30 +99,30 @@ class TestStandaloneOnly(unittest.TestCase):
         return FilenameRedactor(mappings).redact_filename(name)[0]
 
     def test_keyword_inside_longer_word_is_left_alone(self):
-        self.assertEqual(self._name("tomorrow price.md"), "tomorrow price.md")
-        self.assertEqual(self._name("atom_pricerice.md"), "atom_pricerice.md")
+        self.assertEqual(self._name("bobble arose.md"), "bobble arose.md")
+        self.assertEqual(self._name("nabob_primrose.md"), "nabob_primrose.md")
 
     def test_short_standalone_keyword_is_renamed_by_default(self):
-        # No length gate by default: 'tom' (3 chars) on its own is renamed.
+        # No length gate by default: 'bob' (3 chars) on its own is renamed.
         r = FilenameRedactor(WORDS)
-        self.assertEqual(r.redact_filename("tom.md")[0], "ENG-01.md")
+        self.assertEqual(r.redact_filename("bob.md")[0], "ENG-01.md")
         self.assertEqual(r.skipped_short, [])
 
     def test_separators_delimit_keywords(self):
-        self.assertEqual(self._name("tom_rice-notes.md"), "ENG-01_ENG-02-notes.md")
-        self.assertEqual(self._name("notes (tom) rice.md"), "notes (ENG-01) ENG-02.md")
-        self.assertEqual(self._name("tom-tom.md"), "ENG-01-ENG-01.md")
-        self.assertEqual(self._name("tom.tar.gz"), "ENG-01.tar.gz")
+        self.assertEqual(self._name("bob_rose-notes.md"), "ENG-01_ENG-02-notes.md")
+        self.assertEqual(self._name("notes (bob) rose.md"), "notes (ENG-01) ENG-02.md")
+        self.assertEqual(self._name("bob-bob.md"), "ENG-01-ENG-01.md")
+        self.assertEqual(self._name("bob.tar.gz"), "ENG-01.tar.gz")
 
     def test_mixed_standalone_and_embedded_in_one_path(self):
-        new, hits = FilenameRedactor(WORDS).redact_relpath("price list tom/x.md")
-        self.assertEqual(str(new), "price list ENG-01/x.md")
+        new, hits = FilenameRedactor(WORDS).redact_relpath("arose list bob/x.md")
+        self.assertEqual(str(new), "arose list ENG-01/x.md")
         self.assertEqual(hits, 1)
 
     def test_digit_adjacent_is_not_standalone(self):
         # Same rule as content matching: a digit glued to the keyword makes one token.
-        self.assertEqual(self._name("tom2.md"), "tom2.md")
-        self.assertEqual(self._name("2rice.md"), "2rice.md")
+        self.assertEqual(self._name("bob2.md"), "bob2.md")
+        self.assertEqual(self._name("2rose.md"), "2rose.md")
 
     def test_non_ascii_letters_are_letters(self):
         # An accented letter next to the keyword is still a letter — not a separator.
