@@ -212,11 +212,32 @@ Key differences from content redaction:
   useless in a filename — but if one survives in an output name it's **flagged** (listed
   in the report and in `redacted/_filename-flags.txt`) so you can add an alias or rename it
   by hand. NER is never used for names — keywords only.
-- **Substring, not word-boundary.** Names embed terms without spaces (`asmith_1on1`),
-  so matching is case-insensitive *substring*. Terms shorter than `filename_min_match_len`
-  (default `4`) are skipped — and listed in the report — so short keywords (`ed`, `mark`)
-  don't mangle innocent names.
+- **Standalone keywords, with `_` as a separator.** Matching is case-insensitive, and a
+  keyword is replaced only when it is not glued to another letter or digit. Names join
+  words with `_` (`asmith_1on1`), so `_` counts as a separator here, like space, `-` and
+  `.` — unlike content matching, where `_` is part of the word. A keyword inside a longer
+  word is left alone (`rose` does not touch `arose_early.pdf`), and so is one glued on with
+  no separator (`asmithnotes.pdf`) — give that its own keyword entry. *(Until 2026-10-06
+  this was substring matching, which put aliases in the middle of unrelated words.)*
+  `filename_min_match_len` (default `1` = off) is a legacy gate: terms shorter than it are
+  skipped — and listed in the report. It was `4` under substring matching, to stop short
+  keywords (`ed`, `mark`) hitting inside ordinary words; standalone matching already
+  prevents that, so any value above `1` now only leaves short standalone names (a 3-letter
+  first name) in output filenames.
 - **Collisions** (two files redacting to one name) get a deterministic `__2`, `__3` suffix.
+
+Known limits of filename matching — each of these leaves the name in the output filename,
+with no rename and no flag:
+
+- **A multi-word keyword matches only as written.** Keyword `first last` matches
+  `first last 1on1.md` but **not** `first_last_1on1.md`, `first-last.md` or `First.Last.md`
+  — the space in the keyword has to be a space in the name. This applies only to the
+  multi-word keyword: separate keywords `first` and `last` each match in all of those
+  names (giving `ENG-01_ENG-01_1on1.md` when both share one alias). If your filenames join
+  name parts with `_`, `-` or `.`, list the parts as their own keywords (in a
+  `gen_keywords.py` names file: `First Last, First, Last`).
+- **Glued names.** A keyword joined to other letters or digits with no separator is not
+  matched: `asmithnotes.pdf`, `FirstLast.md` (camelCase is not split), `asmith2.md`.
 
 `--dry-run` previews the outcome. The report's **FILENAME REDACTIONS** section **itemizes**
 the old→new renames and any plain-keyword leaks — the report already lists matched PII in

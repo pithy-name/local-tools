@@ -1,12 +1,13 @@
-"""filename_redactor.py — deterministic, no-spaCy SUBSTRING engine for redacting
-keyword matches inside output FILENAMES and directory names.
+"""filename_redactor.py — deterministic, no-spaCy STANDALONE-KEYWORD engine for
+redacting keyword matches inside output FILENAMES and directory names.
 
 Stdlib only. Sibling to keyword_redactor.py, with two deliberate differences:
 
-  1. SUBSTRING match (no `\\b`): names embed terms without boundaries
-     (`asmith_1on1.png`), which the word-boundary content engine leaves alone. To
-     stop short keywords (`ed`, `mark`) mangling innocent names, terms shorter than
-     `min_len` are skipped (surfaced via `skipped_short`).
+  1. STANDALONE match instead of the content engine's `\\b`. The rule itself is defined
+     once in code (`_NOT_AFTER_ALNUM` / `_NOT_BEFORE_ALNUM` below) and described once in
+     prose, with examples, known limits and its history, in README.md → "Redacting filenames".
+     `min_len` is an optional gate, off by default (1); terms it skips are surfaced via
+     `skipped_short`.
 
   2. Only ALIASED keywords are RENAMED. A keyword with a `replace` pseudonym is
      substituted (filesystem-sanitized) into the name. A PLAIN (blackout, replace=None)
@@ -27,6 +28,22 @@ from pathlib import PurePosixPath
 _UNSAFE = re.compile(r"[^A-Za-z0-9._-]+")
 _FALLBACK = "REDACTED"   # used only if a pseudonym sanitizes to empty (degenerate)
 
+# Standalone-keyword boundaries: the keyword must not touch a letter or digit on either
+# side. `[^\W_]` is "any Unicode letter or digit" (word chars minus `_`), so `_` is a
+# separator and an accented letter is still a letter.
+_NOT_AFTER_ALNUM = r"(?<![^\W_])"
+_NOT_BEFORE_ALNUM = r"(?![^\W_])"
+
+
+def _standalone_pattern(terms):
+    """Compile a case-insensitive pattern matching any of `terms` as a standalone
+    keyword (longest first, so the alternation prefers longer matches). None if empty."""
+    ordered = sorted(set(terms), key=len, reverse=True)
+    if not ordered:
+        return None
+    alts = "|".join(re.escape(t) for t in ordered)
+    return re.compile("(?i)" + _NOT_AFTER_ALNUM + "(?:" + alts + ")" + _NOT_BEFORE_ALNUM)
+
 
 def sanitize_pseudonym(s: str) -> str:
     """Make a pseudonym safe to embed in a filename: keep [A-Za-z0-9._-], map any
@@ -38,10 +55,10 @@ def sanitize_pseudonym(s: str) -> str:
 
 
 class FilenameRedactor:
-    """Substring keyword redactor for a single path component or relative path.
+    """Standalone-keyword redactor for a single path component or relative path.
     Renames ALIASED keywords; FLAGS plain ones."""
 
-    def __init__(self, mappings, min_len: int = 4):
+    def __init__(self, mappings, min_len: int = 1):
         self.min_len = min_len
         aliased, plain, skipped = [], [], []
         for m in mappings:
@@ -55,14 +72,15 @@ class FilenameRedactor:
         self.skipped_short = sorted(set(skipped))
         # Plain (no-alias) terms: flagged, never renamed.
         self._plain_terms = sorted(set(plain))
-        # Longest find first so the alternation prefers longer matches; NO \b → substring.
-        ordered = sorted(aliased, key=lambda m: len(m["find"]), reverse=True)
         self._lookup = {m["find"].lower(): m for m in aliased}
-        alts = "|".join(re.escape(m["find"]) for m in ordered)
-        self._pattern = re.compile("(?i)(?:" + alts + ")") if alts else None
+        self._pattern = _standalone_pattern(m["find"] for m in aliased)
+        # Combined pattern = cheap "any plain term here?" pre-check; the per-term patterns
+        # then report EVERY term present, including one nested inside a longer term.
+        self._plain_pattern = _standalone_pattern(self._plain_terms)
+        self._plain_each = [(t, _standalone_pattern([t])) for t in self._plain_terms]
 
     def _redact_string(self, s: str):
-        """Substitute every ALIASED-keyword substring → (new_string, n_hits)."""
+        """Substitute every standalone ALIASED keyword → (new_string, n_hits)."""
         if self._pattern is None:
             return s, 0
         count = 0
@@ -103,10 +121,11 @@ class FilenameRedactor:
         return PurePosixPath(*new_parts), total
 
     def flagged_terms_in(self, name: str) -> list:
-        """Plain (no-alias) keywords present as substrings in `name` — the leaks that were
+        """Plain (no-alias) keywords standing on their own in `name` — the leaks that were
         NOT auto-renamed. Case-insensitive; min_len already applied. Sorted, distinct."""
-        low = name.lower()
-        return [t for t in self._plain_terms if t.lower() in low]
+        if self._plain_pattern is None or not self._plain_pattern.search(name):
+            return []
+        return [t for t, pat in self._plain_each if pat.search(name)]
 
 
 def _with_suffix_tag(path: str, n: int) -> str:

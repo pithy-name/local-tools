@@ -1,10 +1,10 @@
-"""Tests for filename_redactor.py — the stdlib substring filename-redaction engine.
+"""Tests for filename_redactor.py — the stdlib standalone-keyword filename-redaction engine.
 
 Runs under system python3 (stdlib only). Mirrors test_keyword_redactor.py's layout.
 
 Two key rules, both deliberate:
-  1. SUBSTRING match (no \\b) — catches embedded terms like `asmith_1on1.png` that the
-     word-boundary CONTENT engine leaves alone.
+  1. STANDALONE match — the rule is described in README.md → "Redacting filenames";
+     TestStandaloneOnly below pins each case.
   2. ALIASED keywords only get RENAMED (→ their pseudonym). PLAIN (blackout) keywords are
      NOT renamed — they're only FLAGGED (a plain `█████`-style token is useless in a
      filename, and the user tracks identities by pseudonym). A plain keyword found in an
@@ -35,7 +35,7 @@ MAP = [
 
 
 class TestRedactString(unittest.TestCase):
-    def test_embedded_substring_match_no_boundary(self):
+    def test_underscore_joined_term_matches(self):
         new, hits = FilenameRedactor(MAP).redact_dirname("asmith_1on1")
         self.assertEqual(new, "PERSON_A_1on1")
         self.assertEqual(hits, 1)
@@ -59,9 +59,15 @@ class TestRedactString(unittest.TestCase):
 
     def test_aliased_term_at_threshold_is_kept(self):
         r = FilenameRedactor([{"find": "alex", "replace": "[X]"}], min_len=4)
-        new, _ = r.redact_dirname("alexnotes")
-        self.assertEqual(new, "Xnotes")      # len('alex') == min_len → matched
+        new, _ = r.redact_dirname("alex_notes")
+        self.assertEqual(new, "X_notes")     # len('alex') == min_len → matched
         self.assertEqual(r.skipped_short, [])
+
+    def test_term_glued_to_letters_is_not_matched(self):
+        # No separator between keyword and the rest → not standalone → left alone.
+        new, hits = FilenameRedactor([{"find": "alex", "replace": "[X]"}]).redact_dirname("alexnotes")
+        self.assertEqual(new, "alexnotes")
+        self.assertEqual(hits, 0)
 
     def test_longest_match_first(self):
         r = FilenameRedactor([
@@ -75,6 +81,81 @@ class TestRedactString(unittest.TestCase):
         new, hits = FilenameRedactor(MAP).redact_dirname("vacation_2024")
         self.assertEqual(new, "vacation_2024")
         self.assertEqual(hits, 0)
+
+
+# Short everyday words that are also names: the standalone-only regression cases.
+WORDS = [
+    {"find": "bob", "replace": "[ENG-01]"},
+    {"find": "rose", "replace": "[ENG-02]"},
+    {"find": "bort", "replace": None},
+]
+
+
+class TestStandaloneOnly(unittest.TestCase):
+    """A keyword is substituted only when it stands on its own — never inside a longer
+    word — and a standalone keyword is substituted however short it is."""
+
+    def _name(self, name, mappings=WORDS):
+        return FilenameRedactor(mappings).redact_filename(name)[0]
+
+    def test_keyword_inside_longer_word_is_left_alone(self):
+        self.assertEqual(self._name("bobble arose.md"), "bobble arose.md")
+        self.assertEqual(self._name("nabob_primrose.md"), "nabob_primrose.md")
+
+    def test_short_standalone_keyword_is_renamed_by_default(self):
+        # No length gate by default: 'bob' (3 chars) on its own is renamed.
+        r = FilenameRedactor(WORDS)
+        self.assertEqual(r.redact_filename("bob.md")[0], "ENG-01.md")
+        self.assertEqual(r.skipped_short, [])
+
+    def test_separators_delimit_keywords(self):
+        self.assertEqual(self._name("bob_rose-notes.md"), "ENG-01_ENG-02-notes.md")
+        self.assertEqual(self._name("notes (bob) rose.md"), "notes (ENG-01) ENG-02.md")
+        self.assertEqual(self._name("bob-bob.md"), "ENG-01-ENG-01.md")
+        self.assertEqual(self._name("bob.tar.gz"), "ENG-01.tar.gz")
+
+    def test_mixed_standalone_and_embedded_in_one_path(self):
+        new, hits = FilenameRedactor(WORDS).redact_relpath("arose list bob/x.md")
+        self.assertEqual(str(new), "arose list ENG-01/x.md")
+        self.assertEqual(hits, 1)
+
+    def test_digit_adjacent_is_not_standalone(self):
+        # Same rule as content matching: a digit glued to the keyword makes one token.
+        self.assertEqual(self._name("bob2.md"), "bob2.md")
+        self.assertEqual(self._name("2rose.md"), "2rose.md")
+
+    def test_non_ascii_letters_are_letters(self):
+        # An accented letter next to the keyword is still a letter — not a separator.
+        m = [{"find": "caf", "replace": "[C]"}, {"find": "zoë", "replace": "[Z]"}]
+        self.assertEqual(self._name("café.md", m), "café.md")
+        self.assertEqual(self._name("zoë_notes.md", m), "Z_notes.md")
+        self.assertEqual(self._name("zoëtrope.md", m), "zoëtrope.md")
+
+    def test_multi_word_keyword(self):
+        m = [{"find": "quendle marsh", "replace": "[ENG-03]"}]
+        self.assertEqual(self._name("Quendle Marsh 1on1.md", m), "ENG-03 1on1.md")
+        self.assertEqual(self._name("Quendle Marshall.md", m), "Quendle Marshall.md")
+
+    def test_multi_word_keyword_needs_its_own_separator(self):
+        # Documented limit: the space in a multi-word keyword must be a space in the name.
+        full = [{"find": "first last", "replace": "[ENG-03]"}]
+        for name in ("first_last_1on1.md", "first-last.md", "First.Last.md"):
+            self.assertEqual(self._name(name, full), name)
+        # Single-word keywords for the parts DO match across those separators.
+        parts = [{"find": "first", "replace": "[ENG-03]"},
+                 {"find": "last", "replace": "[ENG-03]"}]
+        self.assertEqual(self._name("first_last_1on1.md", parts), "ENG-03_ENG-03_1on1.md")
+        self.assertEqual(self._name("First.Last.md", parts), "ENG-03.ENG-03.md")
+
+    def test_plain_keyword_inside_longer_word_is_not_flagged(self):
+        r = FilenameRedactor(WORDS)
+        self.assertEqual(r.flagged_terms_in("abort.md"), [])
+        self.assertEqual(r.flagged_terms_in("notes/bort_plan.md"), ["bort"])
+
+    def test_every_plain_term_present_is_flagged_even_when_nested(self):
+        r = FilenameRedactor([{"find": "bort", "replace": None},
+                              {"find": "bort plan", "replace": None}])
+        self.assertEqual(r.flagged_terms_in("my bort plan.md"), ["bort", "bort plan"])
 
 
 class TestFlagging(unittest.TestCase):
