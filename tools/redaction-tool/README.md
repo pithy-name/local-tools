@@ -216,12 +216,14 @@ Key differences from content redaction:
   keyword is replaced only when it is not glued to another letter or digit. Names join
   words with `_` (`asmith_1on1`), so `_` counts as a separator here, like space, `-` and
   `.` — unlike content matching, where `_` is part of the word. A keyword inside a longer
-  word is left alone (`rice` does not touch `price_list.pdf`), and so is one glued on with
+  word is left alone (`rose` does not touch `arose_early.pdf`), and so is one glued on with
   no separator (`asmithnotes.pdf`) — give that its own keyword entry. *(Until 2026-10-06
   this was substring matching, which put aliases in the middle of unrelated words.)*
-  `filename_min_match_len` (default `1` = off; was `4` under substring matching) is a
-  legacy gate: terms shorter than it are skipped — and listed in the report. Any value
-  above `1` leaves short standalone names in output filenames.
+  `filename_min_match_len` (default `1` = off) is a legacy gate: terms shorter than it are
+  skipped — and listed in the report. It was `4` under substring matching, to stop short
+  keywords (`ed`, `mark`) hitting inside ordinary words; standalone matching already
+  prevents that, so any value above `1` now only leaves short standalone names (a 3-letter
+  first name) in output filenames.
 - **Collisions** (two files redacting to one name) get a deterministic `__2`, `__3` suffix.
 
 Known limits of filename matching — each of these leaves the name in the output filename,
