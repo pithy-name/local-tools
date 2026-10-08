@@ -128,15 +128,8 @@ tight_image_boxes: false
 # names, so a keyword in a filename (a person's name, a codename) LEAKS even though the
 # file's contents are redacted. When true, custom_keywords that have an ALIAS (a `replace:`
 # pseudonym) are applied to output file + directory NAMES → the pseudonym (originals are
-# never renamed). Matching is STANDALONE, case-insensitive: a keyword is replaced only when
-# it is not glued to another letter or digit. `_` counts as a separator (as do space, `-`,
-# `.`), so `asmith_1on1.png` matches keyword `asmith` — UNLIKE content matching, where `_`
-# is part of the word. A keyword inside a longer word (`rice` in `price_list.pdf`) is left
-# alone; so is one glued on with no separator (`asmithnotes.pdf`) — give that its own
-# keyword entry. (Matching was SUBSTRING until 2026-10-06.)
-# A multi-word keyword matches only as written: `first last` matches `first last 1on1.md`
-# but NOT `first_last_1on1.md` or `first-last.md`. Separate keywords `first` and `last`
-# do match there — list name parts as their own keywords if your filenames join them.
+# never renamed). Filename matching differs from content matching and has known limits —
+# the rule, examples and limits are in README.md → "Redacting filenames".
 # PLAIN keywords (no alias, blacked out in content) are NOT renamed — a █████ token is
 # useless in a filename — but any that survive in an output name are FLAGGED so you can
 # alias or rename them. The end-of-run report ITEMIZES the old→new renames + leaks (it
@@ -144,11 +137,9 @@ tight_image_boxes: false
 # machine-readable companions: `<output_dir>/_filename-renames.txt` + `_filename-flags.txt`
 # (both hold real names — keep local).
 redact_filenames: false
-# Legacy gate, off at 1. Filename matching skips keywords shorter than this many
-# characters; skipped terms are listed in the report. It defaulted to 4 while matching was
-# substring, so short terms (`ed`, `mark`) didn't mangle innocent names. Standalone matching
-# already prevents that, and any value above 1 now LEAVES short standalone names (a 3-letter
-# first name) in output filenames — keep it at 1 unless you want that.
+# Legacy gate, off at 1 — keep it at 1 unless you have a reason not to. Filename matching
+# skips keywords shorter than this many characters; skipped terms are listed in the report.
+# What a higher value does: README.md → "Redacting filenames".
 filename_min_match_len: 1
 
 # End-of-run report FILE. The unified report ALWAYS prints to the console (dry-run
