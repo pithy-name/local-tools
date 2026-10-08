@@ -3,20 +3,11 @@ redacting keyword matches inside output FILENAMES and directory names.
 
 Stdlib only. Sibling to keyword_redactor.py, with two deliberate differences:
 
-  1. STANDALONE match, with `_` as a separator: a keyword matches only when it is not
-     glued to another letter or digit. Names join words with `_` (`asmith_1on1.png`),
-     which the content engine's `\\b` treats as part of the word and so leaves alone;
-     here `_` separates, like space, `-` and `.`. A keyword INSIDE a longer word (`rice`
-     in `price`) is never matched. (Until 2026-10-06 this was plain SUBSTRING matching
-     behind a default `min_len` of 4: it put aliases in the middle of unrelated words
-     and skipped short standalone names.) `min_len` is kept as an optional gate, off by
-     default (1); terms it skips are surfaced via `skipped_short`.
-
-     Known limits (the name is left in place, unflagged): a keyword glued to letters or
-     digits with no separator (`asmithnotes`, camelCase `FirstLast`, `asmith2`); and a
-     MULTI-WORD keyword whose words are joined differently in the name — `first last`
-     matches `first last.md` but not `first_last.md` (single-word keywords `first` and
-     `last` do match there).
+  1. STANDALONE match instead of the content engine's `\\b`. The rule itself is defined
+     once in code (`_NOT_AFTER_ALNUM` / `_NOT_BEFORE_ALNUM` below) and described once in
+     prose, with examples, known limits and its history, in README.md → "Redacting filenames".
+     `min_len` is an optional gate, off by default (1); terms it skips are surfaced via
+     `skipped_short`.
 
   2. Only ALIASED keywords are RENAMED. A keyword with a `replace` pseudonym is
      substituted (filesystem-sanitized) into the name. A PLAIN (blackout, replace=None)
