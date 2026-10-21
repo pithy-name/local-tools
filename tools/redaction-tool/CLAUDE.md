@@ -83,7 +83,6 @@ scan/leak-guard logic) also run under system `python3`.
 - `include_extensions` is an enforced allowlist (only listed + handled types are processed); `--include .md,.txt` overrides it per run; `skip_extensions` is checked first
 - Re-runs never re-redact own output: a scan skips any nested dir named `redacted`/`redacted-*` (and `redaction-report*.md`), so re-running a folder after adding keywords is safe and won't nest prior output. Exception: pointing the tool *directly at* a `redacted-*` dir (as the input) processes it. Originals are read-only — never renamed/modified (`_is_own_output_dir`, redact.py)
 - `URL` entity (add to `entities`) → http(s) URLs redacted to a **domain-aware** `[<domain> URL]` (verbatim-lowercase registrable domain; a keyword domain → its alias; unknown/unparseable → plain `[URL]`). In **HTML**: every `<a href>` is scrubbed (not just `mailto:`) to a plain `[URL]`, and the `[<domain> URL]` label is **appended** to descriptive link text (visible text kept for context); a link whose text IS the URL becomes the label. Registrable-domain is a heuristic (multi-part TLDs like `.co.uk` not special-cased). Helpers: `url_token` / `_registrable_label` in `redact.py`
-- **Selective URL redaction** (redact only *chosen* URLs, keep public links) is NOT a tool mode: it's a separate, approval-gated pass over already-redacted output, defined in `selective-url-redaction-rules.md` (procedure, token and display-text rules, document formats, verification). Start a session with `selective-url-redaction-prompt.md`. It deliberately differs from the `URL` entity: tokens are Title Case `[<Service> URL]`, and the service is cited inside `<a href>` too, where the tool writes a plain `[URL]`.
 - `redact_filenames: true` (opt-in, default off) → renames aliased `custom_keywords` in output file + dir NAMES; plain keywords are flagged, not renamed. Filename matching is NOT the content path's word-boundary rule. The matching rule, `filename_min_match_len`, known limits, report section and companion files are described once, in README.md → "Redacting filenames" — read that before changing or explaining filename behaviour; do not restate the rule elsewhere. Engine: `filename_redactor.py` (stdlib; the rule lives in `_NOT_AFTER_ALNUM` / `_NOT_BEFORE_ALNUM`)
 - **HTML** `<code>` and `<pre>` text is redacted like any other visible text (keywords, emails, URLs); markup and `<pre>` whitespace are preserved. Only `<script>` and `<style>` bodies are passed through unredacted — a term inside inline JS/CSS/JSON-LD is NOT caught (`SKIP_TAGS` in `process_html`, redact.py)
 - Every run (dry-run AND real) prints the SAME unified report — PATTERN MATCHES (regex) / MODEL ENTITIES (NER) / CUSTOM KEYWORDS (blacked out vs replaced), per-group subtotals + grand total; the real run adds an `Output at:` line. Itemizes text and image/PDF matches alike
@@ -99,3 +98,16 @@ overrides), `replacement` char, `spacy_model`, `output_dir`, `copy_unhandled`
 `timestamp_outputs` (suffix a per-run `YYYYMMDD-HHMMSS` onto the redacted dir + default
 report — testing aid), `names_file` (`--full-throttle`'s names list, default `names.md`),
 `skip_extensions`, OCR settings.
+
+## Selective URL redaction
+
+Redacting only *chosen* URLs, while keeping public links, is not a tool mode.
+It's a separate, approval-gated pass over already-redacted output:
+
+- `selective-url-redaction-rules.md`: procedure, token and display-text rules,
+  document formats, verification.
+- `selective-url-redaction-prompt.md`: starts a session from the rules file.
+
+Its tokens deliberately differ from the `URL` entity's: Title Case
+`[<Service> URL]`, with the service cited inside `<a href>` too, where the tool
+writes a plain `[URL]`.
