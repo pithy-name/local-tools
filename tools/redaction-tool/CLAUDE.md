@@ -98,3 +98,16 @@ overrides), `replacement` char, `spacy_model`, `output_dir`, `copy_unhandled`
 `timestamp_outputs` (suffix a per-run `YYYYMMDD-HHMMSS` onto the redacted dir + default
 report — testing aid), `names_file` (`--full-throttle`'s names list, default `names.md`),
 `skip_extensions`, OCR settings.
+
+## Selective URL redaction
+
+Redacting only *chosen* URLs, while keeping public links, is not a tool mode.
+It's a separate, approval-gated pass over already-redacted output:
+
+- `selective-url-redaction-rules.md`: procedure, token and display-text rules,
+  document formats, verification.
+- `selective-url-redaction-prompt.md`: starts a session from the rules file.
+
+Its tokens deliberately differ from the `URL` entity's: Title Case
+`[<Service> URL]`, with the service cited inside `<a href>` too, where the tool
+writes a plain `[URL]`.
